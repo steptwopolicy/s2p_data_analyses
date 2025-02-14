@@ -2,7 +2,6 @@
 .Rhistory
 .RData
 .Ruserdata
-.R
-.Rmd
-.RProj
-s2p_data_analyses.Rproj
+*.R
+*.Rmd
+*.RProj
