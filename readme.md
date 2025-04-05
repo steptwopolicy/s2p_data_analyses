@@ -12,14 +12,14 @@ While most updates are automated, updating the Excel‑based tools requires a fe
 
 ## Table of Contents
 
-1.  System Requirements\
-2.  Installing R and RStudio\
-3.  Setting Up the RStudio Project\
-4.  Rendering the R Markdown Files\
-5.  Updating the Excel Workbooks\
-6.  Committing and Pushing Changes to GitHub\
-7.  Maintenance Schedule\
-8.  Troubleshooting & FAQ\
+1.  System Requirements
+2.  Installing R and RStudio
+3.  Setting Up the RStudio Project
+4.  Rendering the R Markdown Files
+5.  Updating the Excel Workbooks
+6.  Committing and Pushing Changes to GitHub
+7.  Maintenance Schedule
+8.  Troubleshooting & FAQ
 9.  Additional Notes
 
 ------------------------------------------------------------------------
@@ -28,11 +28,11 @@ While most updates are automated, updating the Excel‑based tools requires a fe
 
 -   **R** (version ≥ 4.3.2
 
--   **RStudio** (version ≥ 2024.12)\
+-   **RStudio** (version ≥ 2024.12)
 
--   **Git** installed and configured\
+-   **Git** installed and configured
 
--   **GitHub account** with access to the private repository\
+-   **GitHub account** with access to the private repository
 
 -   **Microsoft Excel** (for workbooks)
 
@@ -54,10 +54,10 @@ Download and install RStudio from [RStudio's website](https://posit.co/download/
 
 ### Step 1: Clone the GitHub Repo
 
-1.  Open RStudio.\
-2.  Go to **File \> New Project \> Version Control \> Git**.\
-3.  Paste the repository URL (<https://github.com/steptwopolicy/s2p_data_analyses>).\
-4.  Choose a local folder to clone the repo into.\
+1.  Open RStudio.
+2.  Go to **File \> New Project \> Version Control \> Git**.
+3.  Paste the repository URL (<https://github.com/steptwopolicy/s2p_data_analyses>).
+4.  Choose a local folder to clone the repo into.
 5.  Click **Create Project**.
 
 ### Step 2: Install Required R Packages
@@ -83,17 +83,17 @@ params:
 
 ### To Manually Render
 
-1.  **Open the `.Rmd` file in RStudio.**\
-    ![](images/Screenshot%202025-04-05%20at%203.49.46%20PM.jpg){width="500"}
+1.  **Open the `.Rmd` file in RStudio.**
+    <img src="images/Screenshot 2025-04-05 at 3.49.46 PM.png" width="500">
 
-2.  **Click the “Knit” button**\
-    ![](images/Screenshot%202025-04-05%20at%203.53.35%20PM.jpg){width="500"}
+2.  **Click the “Knit” button**
+    <img src="images/Screenshot 2025-04-05 at 3.53.35 PM.png" width="500">
 
 3.  **Locate the Generated Files**
 
-    -   HTML report: `/report-name.html`\
+    -   HTML report: `/report-name.html`
     -   CSVs:
-        -   `/*_table_data.csv`\
+        -   `/*_table_data.csv`
         -   `/*_projection_data.csv`
 
 ------------------------------------------------------------------------
@@ -102,47 +102,47 @@ params:
 
 Each of the two Excel workbooks uses two CSVs:
 
--   `*_table_data.csv` → Table sheet (visible first sheet)\
+-   `*_table_data.csv` → Table sheet (visible first sheet)
 -   `*_projection_data.csv` → Projections sheet (hidden third sheet)
 
-> **Note on Frequency:**\
+> **Note on Frequency:**
 > Although a new row in the Projections sheet is added only once per fiscal year, because the enrollment data source makes retrospective updates to prior months, **update the Projections sheet every month** using the latest CSV—even if you don’t add a new row that month.
 
 ### A. Unlock and Unhide Sheets
 
-1.  Open the Excel workbook.\
+1.  Open the Excel workbook.
 2.  Unhide the **Projections** sheet:
-    -   Right‑click any sheet tab → **Unhide** → select **Projections**.\
+    -   Right‑click any sheet tab → **Unhide** → select **Projections**.
 3.  Unprotect **Table** and **Projections** sheets:
     -   Go to **Review \> Unprotect Sheet** (no password required).
 
 ### B. Insert Rows and Paste Data
 
 1.  **Table Sheet**
-    -   Insert new rows at the top of the data table.\
+    -   Insert new rows at the top of the data table.
     -   Copy contents from `*_table_data.csv` and paste **Values Only** (right‑click → Paste Special → Values).
 2.  **Projections Sheet**
-    -   Insert rows into the named range `table1` (Actual data only).\
+    -   Insert rows into the named range `table1` (Actual data only).
     -   Paste **Values Only** from `*_projection_data.csv` into those rows.
 3.  **Monthly Retrospective Updates**
     -   Even without adding a new row, clear and re‑paste the `*_projection_data.csv` monthly to capture any adjustments.
 
 ### C. Reprotect and Hide Table & Projections Sheets
 
-1.  Protect both sheets: **Review \> Protect Sheet** (leave password blank).\
+1.  Protect both sheets: **Review \> Protect Sheet** (leave password blank).
 2.  Hide the **Projections** sheet: Right‑click tab → **Hide**.
 
 ### D. Update the Graph Sheet’s Bar Colors
 
 1.  Unprotect **Graph** sheet:
-    -   Right‑click any tab → **Unhide** → select **Graph**.\
+    -   Right‑click any tab → **Unhide** → select **Graph**.
     -   **Review \> Unprotect Sheet**.
 2.  Adjust bar-fill colors:
-    -   Select the chart.\
-    -   Click on the “Actual” bars and set their **Fill Color** to the Actual-data color.\
+    -   Select the chart.
+    -   Click on the “Actual” bars and set their **Fill Color** to the Actual-data color.
     -   Click on the “Projected” bars (last five years) and set their **Fill Color** to the Projection-data color.
 3.  Reprotect **Graph** sheet:
-    -   **Review \> Protect Sheet** (leave password blank).\
+    -   **Review \> Protect Sheet** (leave password blank).
     -   Right‑click tab → **Hide**.
 
 ### E. Save the Workbook
@@ -153,9 +153,9 @@ Each of the two Excel workbooks uses two CSVs:
 
 ## 6. Committing and Pushing Changes to GitHub
 
-1.  In RStudio’s **Git** tab, check updated HTML, CSV, and Excel files.\
-    ![](images/Screenshot%202025-04-05%20at%204.02.40%20PM.jpg){width="500"}
-2.  Click **Commit** (the button with the checkmark), enter a message (e.g., “Update reports & Excel – May 2025”), and click **Commit**.\
+1.  In RStudio’s **Git** tab, check updated HTML, CSV, and Excel files.
+    <img src="images/Screenshot 2025-04-05 at 4.02.40 PM.png" width="500">
+2.  Click **Commit** (the button with the checkmark), enter a message (e.g., “Update reports & Excel – May 2025”), and click **Commit**.
 3.  Click **Push** (the green arrow) to upload changes.
 
 > Once pushed, the website will automatically publish the updated reports and data.
@@ -198,9 +198,9 @@ Each of the two Excel workbooks uses two CSVs:
 
 ## 9. Additional Notes
 
--   Automated updates of HTML and CSV files are handled by the Isaac’s daily script.\
--   Excel workbooks require manual updates only as described above.\
--   If formulas are accidentally deleted, restore from the previous Git commit.\
+-   Automated updates of HTML and CSV files are handled by the Isaac’s daily script.
+-   Excel workbooks require manual updates only as described above.
+-   If formulas are accidentally deleted, restore from the previous Git commit.
 -   For further support or to convert this manual into PDF/Word, please contact Isaac.
 
 ------------------------------------------------------------------------
