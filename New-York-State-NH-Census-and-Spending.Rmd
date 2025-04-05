@@ -1,0 +1,542 @@
+---
+output:
+  html_document:
+    toc: false
+params:
+  project_directory: "/Users/isaac/Dropbox/S2P Datasets Shared Folder/MLTC_MMC_NH_data/"
+  use_local_data: FALSE
+---
+
+<style>
+.button_download {
+font-size: 16px;
+font-family: "Arial";
+color: black;
+background-color: #C7C9D8;
+}
+</style>
+
+```{r setup_options, include=FALSE}
+knitr::opts_chunk$set(eval = TRUE, include = TRUE, echo = FALSE, message = FALSE, warning = FALSE, error = TRUE, fig.width = 12, fig.height = 8, cache = FALSE)
+```
+
+```{r setup_libraries, include=FALSE}
+library(tidyverse)
+library(scales)
+library(gt)
+library(pdftools)
+library(httr)
+library(downloadthis)
+data_dir <- params$project_directory
+```
+
+```{r isaac_step2_graph_theme, include=FALSE}
+isaac_step2_graph_theme <- theme(plot.title.position = "plot",
+                                 plot.title = element_text(face = "bold"),
+                                 legend.position = "top",
+                                 strip.text = element_text(color = "black"),
+                                 legend.title = element_text(face = "bold",hjust = 0.5),
+                                 axis.title.y = element_text(face = "bold",angle = 90),
+                                 axis.title.x = element_text(face = "bold"))
+```
+
+```{r setup_nh_data_ingestion, include=FALSE}
+if(params$use_local_data == FALSE){
+  # https://health.data.ny.gov/Health/Nursing-Home-Weekly-Bed-Census-Beginning-2009/uhyy-xp9s/about_data
+  nh_historic <- read_csv("https://health.data.ny.gov/api/views/uhyy-xp9s/rows.csv?accessType=DOWNLOAD") %>% janitor::clean_names()
+  write_csv(nh_historic,paste0(data_dir,'nh/data/NH_Weekly_Bed_Census_Beginning_2009.csv'))
+} else{
+  nh_historic <- read_csv(paste0(data_dir,'nh/data/NH_Weekly_Bed_Census_Beginning_2009.csv'))
+}
+```
+
+```{r setup_medicaid_spending_data_ingestion, include=FALSE}
+if(params$use_local_data == FALSE){
+  # https://www.health.ny.gov/health_care/medicaid/regulations/global_cap/
+  try_downloading_report <- function(){
+    # Use GET with a User-Agent header
+    response <- GET(pdf_url, user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"))
+    
+    # Check response status
+    if (status_code(response) == 200) {
+      writeBin(content(response, "raw"), pdf_file)
+      message("File downloaded successfully.")
+    } else {
+      message("Failed to download file. HTTP status: ", status_code(response))
+    }
+  }
+  
+  # Download Global Cap Quarterly Reports
+  for(i in c(2011:(as.numeric(format(Sys.Date(),"%Y"))))){
+    for(j in c(1:4)){
+      qrt_number <- case_when(j == 1 ~ "1st",
+                              j == 2 ~ "2nd",
+                              j == 3 ~ "3rd",
+                              j == 4 ~ "4th")
+      
+      pdf_url <- paste0("https://www.health.ny.gov/health_care/medicaid/regulations/global_cap/monthly/sfy_",i,"-",i+1,"/docs/",qrt_number,"_qtr_rpt.pdf")
+      
+      pdf_file <- paste0(data_dir,"global_cap_reports/nys_medicaid_",i,"-",i+1,"_q",j,"report.pdf")
+      
+      if(file.exists(pdf_file) == FALSE){
+        try_downloading_report()
+      } else{
+        message("File already downloaded")
+      }
+    }
+  }
+  
+  # Download Global Cap Monthly Reports
+  for(i in c(2011:(as.numeric(format(Sys.Date(),"%Y"))))){
+    for(j in c(month.name,month.abb,"Sept")){
+      for(k in c(0,1)){
+        pdf_url <- paste0("https://www.health.ny.gov/health_care/medicaid/regulations/global_cap/monthly/sfy_",i,"-",i+1,"/docs/",j,"_",i+k,"_report.pdf") %>% 
+          str_to_lower()
+        
+        pdf_file <- paste0(data_dir,"global_cap_reports/nys_medicaid_",i,"-",i+1,"_month_",j,"_",i+k,"_report.pdf")
+        
+        if(file.exists(pdf_file) == FALSE){
+          try_downloading_report()
+        } else{
+          message("File already downloaded")
+        }
+      }
+    }
+  }
+  
+  report_names <- list.files(paste0(data_dir,"global_cap_reports/"),
+                             pattern = ".pdf",
+                             full.names = FALSE,
+                             recursive = FALSE) %>% 
+    # Unusually formatted non-Q4 report
+    setdiff("nys_medicaid_2024-2025_q2report.pdf")
+  
+  report_paths <- list.files(paste0(data_dir,"global_cap_reports/"),
+                             pattern = ".pdf",
+                             full.names = TRUE,
+                             recursive = FALSE) %>% 
+    # Unusually formatted non-Q4 report
+    setdiff("/Users/isaac/Dropbox/S2P Datasets Shared Folder/MLTC_MMC_NH_data/global_cap_reports//nys_medicaid_2024-2025_q2report.pdf")
+  
+  for(i in c(1:length(report_names))){
+    report_name <- report_names[i]
+    
+    # Extract text from the PDF
+    pdf_text <- pdf_text(report_paths[i])
+    
+    report_table_page <- c(1:length(pdf_text))[pdf_text %>% str_to_lower() %>% str_detect("actual") &
+                                                 pdf_text %>% str_to_lower() %>% str_detect("variance") &
+                                                 (pdf_text %>% str_to_lower() %>% str_detect("category of service") | pdf_text %>% str_to_lower() %>% str_detect("category of spending") | pdf_text %>% str_to_lower() %>% str_detect("quarter 2")) &
+                                                 pdf_text %>% str_detect("TOTAL") &
+                                                 pdf_text %>% str_to_lower() %>% str_detect("table of contents",negate = TRUE)] %>% 
+      min()
+    
+    pdf_table <- pdf_text[report_table_page]
+    
+    dollar_multiplier <- case_when(pdf_table %>% as.character() %>% str_to_lower() %>% str_detect("in millions") ~ 1000000,
+                                   pdf_table %>% as.character() %>% str_to_lower() %>% str_detect("in thousands") ~ 1000,
+                                   pdf_table %>% as.character() %>% str_to_lower() %>% str_detect("millions") ~ 1000000,
+                                   pdf_table %>% as.character() %>% str_to_lower() %>% str_detect("thousands") ~ 1000)
+    
+    # Parse the table from the extracted text
+    table_data <- str_split(pdf_table,"\n")[[1]] %>% 
+      # Clean and structure the data
+      str_trim() %>%
+      as_tibble()
+    
+    table_start_row <- table_data %>% 
+      rowid_to_column() %>% 
+      filter(value %>% str_to_lower() %>% str_sub(1,19) == "category of service" |
+               value %>% str_to_lower() %>% str_sub(1,20) == "category of spending") %>% 
+      dplyr::pull(rowid)
+    
+    first_data_row <- table_data %>% 
+      rowid_to_column() %>% 
+      filter(value %>% str_count("\\$") == 3,
+             rowid > table_start_row) %>% 
+      dplyr::pull(rowid) %>%
+      min()
+    
+    table_end_row <- table_data %>% 
+      rowid_to_column() %>% 
+      filter(value %>% str_sub(1,5) == "TOTAL") %>% 
+      dplyr::pull(rowid)
+    
+    header_rows <- table_data %>% 
+      slice(table_start_row:first_data_row - 1) %>% 
+      as.character() %>% 
+      paste(collapse = " ") %>% 
+      str_to_lower()
+    
+    table_col_names <- case_when(str_detect(header_rows,"target") ~ c("category_of_service","target","actual","variance"),
+                                 str_detect(header_rows,"estimated") ~ c("category_of_service","estimated","actual","variance"))
+    
+    table_clean <- table_data %>%
+      slice(first_data_row:table_end_row) %>% 
+      separate(col = value, into = c("Column1", "Column2", "Column3", "Column4"), sep = "\\s{2,}", fill = "right")
+    
+    names(table_clean) <- table_col_names
+    
+    table_clean <- table_clean %>% 
+      mutate(report = report_name %>% str_remove(".pdf"),
+             multiplier = dollar_multiplier)
+    
+    if(i == 1){
+      nys_medicaid_spending <- table_clean
+    } else{
+      nys_medicaid_spending <- bind_rows(nys_medicaid_spending,table_clean)
+    }
+    paste0(i," of ",length(report_names),"(",scales::percent(i/length(report_names),accuracy = 0.1),") | ",report_name) %>% print()
+  }
+  write_csv(nys_medicaid_spending,paste0(data_dir,'mmc_mltc/data/Medicaid-Spending-by-Fiscal_Year.csv'))
+} else{
+  nys_medicaid_spending <- read_csv(paste0(data_dir,'mmc_mltc/data/Medicaid-Spending-by-Fiscal_Year.csv'))
+}
+```
+
+```{r setup_medicaid_spending_analysis, include=FALSE}
+mmc_global_cap_analysis <- nys_medicaid_spending %>% 
+  mutate(reference = ifelse(is.na(target),estimated,target),
+         ref_type = ifelse(is.na(target),"estimated","target"),
+         across(.cols = c("reference","actual"),
+                .fns = ~ (.x %>%
+                            # Remove $ and ,
+                            str_remove_all("[\\$,]") %>%
+                            # Replace parentheses with a negative sign
+                            str_replace_all("\\((.*)\\)", "-\\1") %>%
+                            # Convert to numeric
+                            as.numeric()) * multiplier),
+         difference = actual - reference) %>% 
+  select(category_of_service,
+         ref_type,
+         reference,
+         actual,
+         report) %>% 
+  # Only include year-end reports in the analysis
+  filter(str_detect(report,"q4|Mar")) %>% 
+  mutate(fiscal_yr = str_sub(report,14,22),
+         type = case_when(category_of_service %in% c("Long Term Managed Care",
+                                                     "Nursing Homes",
+                                                     "Personal Care",
+                                                     "Other Long Term Care") ~ "Long Term Care")) %>% 
+  select(-report)
+```
+
+```{r setup_nh_analysis, include=FALSE}
+nh_trend_data <- nh_historic %>% 
+  select(facility_id,
+         census_date,
+         ends_with("_beds"),
+         ends_with("beds_available"),
+         -pediatric_ventilator_beds,
+         -dialysis_stations_beds) %>% 
+  pivot_longer(cols = c(!facility_id & !census_date)) %>% 
+  mutate(type = case_when(str_sub(name,-4) == "beds" ~ "beds",
+                          str_sub(name,-14) == "beds_available" ~ "beds_available"),
+         census_date = as.Date(census_date,"%m/%d/%Y"),
+         census_month = census_date %>% format("%Y-%m-01") %>% as.Date(),
+         census_year = census_date %>% format("%Y-01-01") %>% as.Date(),
+         name = name %>% 
+           str_remove("_beds") %>% 
+           str_replace_all("_"," ") %>% 
+           str_to_title()) %>% 
+  group_by(facility_id,
+           census_year,
+           census_month,
+           census_date,
+           type) %>% 
+  summarise(value = sum(value)) %>% 
+  ungroup() %>% 
+  pivot_wider(names_from = type,
+              values_from = value) %>% 
+  mutate(census = beds - beds_available) %>% 
+  # Aggregate from facility-week level to State-week level
+  group_by(census_year,
+           census_month,
+           census_date) %>% 
+  summarise(census = sum(census)) %>% 
+  ungroup() %>% 
+  mutate(fiscal_yr = case_when(month(census_month) <= 3 ~ year(census_year) - 1,
+                               TRUE ~ year(census_year)))
+
+nh_monthly_census_graph <- nh_trend_data %>% 
+  # Aggregate from State-week level to State-month level (Average)
+  group_by(census_month) %>% 
+  summarise(census = mean(census)) %>% 
+  ungroup() %>% 
+  ggplot(aes(x = census_month,
+             y = census)) + 
+  geom_line() +
+  geom_point(size = 1,
+             alpha = 0.5) +
+  labs(title = "Nursing Home, Monthly Average Census",
+       subtitle = paste0("New York State (",
+                         format(min(as.Date(nh_historic$census_date,"%m/%d/%Y")),"%b %Y"),
+                         " to ",
+                         format(max(as.Date(nh_historic$census_date,"%m/%d/%Y")),"%b %Y"),
+                         ")"),
+       x = "",
+       y = "Census\n",
+       caption = paste0("Data Source: Health Data NY\nData as of: ",format(Sys.Date(),"%B %d, %Y"))) +
+  scale_x_date(breaks = breaks_pretty(n = 8)) +
+  scale_y_continuous(breaks = breaks_pretty(n = 8),
+                     labels = comma_format(accuracy = 1),
+                     limits = c(0,NA)) +
+  theme_light(base_size = 16) +
+  isaac_step2_graph_theme
+
+nh_trend_table_data <- nh_trend_data %>% 
+  # Aggregate from State-week level to State-year level (Average)
+  group_by(census_year) %>% 
+  summarise(census = mean(census)) %>% 
+  ungroup() %>% 
+  arrange(desc(census_year)) %>% 
+  mutate(delta = census - lead(census,n=1),
+         delta_pct = delta / lead(census,n=1))
+
+nh_annual_census_table <- nh_trend_table_data %>% 
+  gt() %>% 
+  tab_header(title = md("**Nursing Home, Annual Average Census**"),
+             subtitle = paste0("New York State (",
+                               format(min(as.Date(nh_historic$census_date,"%m/%d/%Y")),"%b %Y"),
+                               " to ",
+                               format(max(as.Date(nh_historic$census_date,"%m/%d/%Y")),"%b %Y"),
+                               ")")) %>% 
+  fmt_date(columns = census_year,
+           date_style = "year") %>% 
+  fmt_integer(c(census,delta)) %>%
+  fmt_percent(delta_pct) %>%
+  cols_label(census_year = "Year",
+             census = "Mean Census",
+             delta = "Increase/Decrease",
+             delta_pct = "% Increase/Decrease") %>% 
+  cols_align(align = "left", columns = census_year) %>% 
+  tab_style(style = cell_text(weight = "bold"),
+            locations = cells_column_labels()) %>% 
+  tab_source_note(source_note = md("**Data Source:** Health Data NY")) %>% 
+  tab_source_note(source_note = md(paste0("**Data as of:** ",format(Sys.Date(),"%B %d, %Y")))) %>% 
+  # cols_width(census_year ~ px(175),
+  #            all_of(c("census")) ~ px(150)) %>% 
+  tab_options(table.font.size = px(10),
+              table.font.names = "Helvetica",
+              data_row.padding = px(2))
+
+nh_census_vs_spending_table_data <- nh_trend_data %>% 
+  group_by(fiscal_yr) %>% 
+  summarise(weeks_reported = census_date %>% unique() %>% length(),
+            mean_census = mean(census)) %>% 
+  ungroup() %>% 
+  left_join(nh_trend_data %>% 
+              group_by(fiscal_yr) %>% 
+              slice_max(census_date) %>% 
+              ungroup() %>% 
+              select(fiscal_yr,
+                     census) %>% 
+              rename("end_of_period_census" = "census"),
+            by = "fiscal_yr") %>% 
+  left_join(mmc_global_cap_analysis %>% 
+              mutate(fiscal_yr_dt = fiscal_yr %>% str_sub(1,4) %>% paste("01","01",sep="-") %>% as.Date(),
+                     fiscal_yr = fiscal_yr_dt %>% format("%Y") %>% as.numeric) %>% 
+              filter(category_of_service == "Nursing Homes") %>% 
+              select(fiscal_yr,actual) %>% 
+              rename("state_spending" = "actual") %>% 
+              mutate(spending = state_spending * 2) %>% 
+              select(-state_spending),
+            by = "fiscal_yr") %>% 
+  
+  # left_join(nh_trend_data %>% 
+  #             arrange(desc(census_date)) %>% 
+  #             mutate(census_delta = census  - lead(census),
+  #                    census_delta_pct = census_delta / lead(census,n=1)) %>% 
+  #             group_by(fiscal_yr) %>% 
+  #             summarise(mean_weekly_change_pct = mean(census_delta_pct)) %>% 
+  #             ungroup(),
+  #           by = "fiscal_yr") %>% 
+  
+  mutate(spending_per_capita = spending / mean_census) %>% 
+  arrange(desc(fiscal_yr)) %>% 
+  filter(fiscal_yr >= 2011) %>% 
+  mutate(across(.cols = c("mean_census","spending","spending_per_capita"),
+                .fns = ~ .x  - lead(.x),
+                .names = "{.col}_delta"),
+         mean_census_delta_pct = mean_census_delta / lead(mean_census,n=1),
+         spending_delta_pct = spending_delta / lead(spending,n=1),
+         spending_per_capita_delta_pct = spending_per_capita_delta / lead(spending_per_capita,n=1),
+         fiscal_yr = paste(fiscal_yr,str_sub(fiscal_yr + 1,3,4),sep = "-"),
+         fiscal_yr = paste0("FY",str_sub(fiscal_yr,-2))) %>% 
+  relocate(fiscal_yr,
+           weeks_reported,
+           mean_census,
+           mean_census_delta,
+           mean_census_delta_pct,
+           end_of_period_census,
+           spending,
+           spending_delta,
+           spending_delta_pct,
+           spending_per_capita,
+           spending_per_capita_delta,
+           spending_per_capita_delta_pct)
+
+nh_census_vs_spending_table <- nh_census_vs_spending_table_data %>% 
+  gt() %>% 
+  tab_header(title = md("**Nursing Home Census and Spending, by Fiscal Year**"),
+             subtitle = paste0("New York State (",
+                               format(min(as.Date(nh_historic$census_date,"%m/%d/%Y")),"%b %Y"),
+                               " to ",
+                               format(max(as.Date(nh_historic$census_date,"%m/%d/%Y")),"%b %Y"),
+                               ")")) %>%
+  fmt_integer(c(weeks_reported,
+                mean_census,
+                end_of_period_census,
+                mean_census_delta)) %>% 
+  fmt_currency(c(spending,
+                 spending_delta,
+                 spending_per_capita,
+                 spending_per_capita_delta),
+               decimals = 0) %>% 
+  fmt_percent(ends_with("pct")) %>% 
+  tab_spanner(label = "Census",
+              columns = c(mean_census,
+                          mean_census_delta,
+                          mean_census_delta_pct,
+                          end_of_period_census)) %>% 
+  tab_spanner(label = "Gross Spending",
+              columns = c(spending,
+                          spending_delta,
+                          spending_delta_pct)) %>% 
+  tab_spanner(label = "Average Annual Gross Spending per Capita",
+              columns = c(spending_per_capita,
+                          spending_per_capita_delta,
+                          spending_per_capita_delta_pct)) %>% 
+  cols_label(fiscal_yr = "Fiscal Year",
+             weeks_reported = "Weeks Reported",
+             mean_census = "Average Census",
+             mean_census_delta = "Annual Change",
+             mean_census_delta_pct = "Annual Change %",
+             end_of_period_census = "End of Period Census",
+             spending = "Medicaid Fee-for-Service Spending",
+             spending_delta = "Annual Change",
+             spending_delta_pct = "Annual Change %",
+             spending_per_capita = "Medicaid Fee-for-Service Spending",
+             spending_per_capita_delta = "Annual Change",
+             spending_per_capita_delta_pct = "Annual Change %") %>% 
+  cols_align(align = "left", columns = fiscal_yr) %>% 
+  tab_style(style = cell_text(weight = "bold"),
+            locations = list(cells_column_labels(),
+                             cells_column_spanners())) %>% 
+  tab_source_note(source_note = md("**Data Sources:** Health Data NY; NYSDOH Global Spending Cap
+Reports")) %>% 
+  tab_source_note(source_note = md(paste0("**Data as of:** ",format(Sys.Date(),"%B %d, %Y")))) %>% 
+  tab_options(table.font.size = px(10),
+              table.font.names = "Helvetica",
+              data_row.padding = px(2))
+
+# Calculate scaling factors for normalization
+max_census <- max(nh_census_vs_spending_table_data$mean_census,na.rm=TRUE)
+max_spending <- max(nh_census_vs_spending_table_data$spending,na.rm=TRUE) / 1e9
+
+nh_census_vs_spending_graph <- nh_census_vs_spending_table_data %>% 
+  select(fiscal_yr,
+         mean_census,
+         spending) %>% 
+  # Create the plot
+  ggplot(aes(x = fiscal_yr)) +
+  # Plot enrollee_months as bars
+  geom_bar(aes(y = mean_census, fill = "Census"),
+           stat = "identity", alpha = 0.9) +
+  # Plot mltc_spending as a line with points
+  geom_line(aes(y = (spending / 1e9) * (max_census / max_spending),
+                group = 1, color = "Spending")) +
+  geom_point(aes(y = (spending / 1e9) * (max_census / max_spending)), color = "black") +
+  # Left y-axis for mean_census
+  scale_y_continuous(
+    name = "Average Census\n",
+    labels = scales::label_comma(),
+    breaks = breaks_pretty(n = 8),
+    sec.axis = sec_axis(~ . * (max_spending / max_census), 
+                        name = "Medicaid Fee-For-Service Gross Spending\n", 
+                        breaks = breaks_pretty(n = 8),
+                        labels = scales::label_dollar(scale = 1,
+                                                      accuracy = 1,
+                                                      suffix = "B"))) +
+  scale_fill_manual(values = "#B9CDE5") +
+  scale_color_manual(values = "black") +
+  # Formatting
+  labs(x = "\nFiscal Year",
+       title = "Nursing Home Census and Spending, by Fiscal Year",
+       subtitle = paste0("New York State (",
+                         format(min(as.Date(nh_historic$census_date,"%m/%d/%Y")),"%b %Y"),
+                         " to ",
+                         format(max(as.Date(nh_historic$census_date,"%m/%d/%Y")),"%b %Y"),
+                         ")"),
+       color = "",
+       fill = "",
+       caption = paste0("Data Sources: Health Data NY; NYSDOH Global Spending Cap Reports\nData as of: ",format(Sys.Date(),"%B %d, %Y"))) +
+  theme_light(base_size = 16) +
+  isaac_step2_graph_theme +
+  theme(legend.text = element_text(face = "bold"))
+```
+
+<br>
+
+### Census and Spending
+
+<br>
+
+```{r nh_enrollment_vs_spending_table}
+nh_census_vs_spending_table %>% 
+  tab_source_note(
+    nh_census_vs_spending_table_data %>% 
+      download_this(
+        output_name = paste0("nh_census_and_spending_",str_replace_all(Sys.Date(),"-","_")),
+        output_extension = ".xlsx",
+        button_label = "Download Excel Workbook",
+        button_type = "default",
+        class = "button_download"
+      )
+  )
+```
+**Data Sources:** [Health Data NY](https://health.data.ny.gov/Health/Nursing-Home-Weekly-Bed-Census-Beginning-2009/uhyy-xp9s/about_data); [New York State Department of Health](https://www.health.ny.gov/health_care/medicaid/regulations/global_cap/)
+
+<br>
+
+```{r nh_census_vs_spending_graph}
+nh_census_vs_spending_graph
+```
+
+**Data Sources:** [Health Data NY](https://health.data.ny.gov/Health/Nursing-Home-Weekly-Bed-Census-Beginning-2009/uhyy-xp9s/about_data); [New York State Department of Health](https://www.health.ny.gov/health_care/medicaid/regulations/global_cap/)
+
+<br>
+
+### Census, Trends Over Time
+
+<br>
+
+```{r nh_annual_census_table}
+nh_annual_census_table
+```
+
+**Data Source:** [Health Data NY](https://health.data.ny.gov/Health/Nursing-Home-Weekly-Bed-Census-Beginning-2009/uhyy-xp9s/about_data)
+
+<br>
+
+```{r nh_monthly_census_graph}
+nh_monthly_census_graph
+```
+
+**Data Source:** [Health Data NY](https://health.data.ny.gov/Health/Nursing-Home-Weekly-Bed-Census-Beginning-2009/uhyy-xp9s/about_data)
+
+<br>
+
+***
+
+### Technical Notes
+
+1. Data include nursing home beds, pediatric beds, behavioral intervention beds, ventilator beds, scatter ventilator beds, traumatic brain injury beds, neurodegenerative disease beds; exclude pediatric ventilator beds, dialysis station beds, and adult day health care slots.  
+2. Spending data represent Medicaid fee-for-service spending only. Spending may include other minor related categories of service spending, such as adult day health care.
+3. Gross spending is estimated assuming a [50% federal match](https://www.kff.org/medicaid/state-indicator/federal-matching-rate-and-multiplier/?currentTimeframe=0&sortModel=%7B%22colId%22:%22Location%22,%22sort%22:%22asc%22%7D) to the State spending reported in quarterly Global Cap Reports.
+4. Census data represent all occupied beds, regardless of payor type.
+5. <i>Beds</i> = The number of Residential Beds the facility is approved to operate.  
+6. <i>Beds Available</i> = Available Residential Beds reported by facility. This figure should include any licensed beds that are not operational.  
+7. <i>Census (aka "Occupied Beds")</i> = (Beds) - (Beds Available).  
+8. <i>End of Period Census</i> The total number of occupied beds at the end of the reporting period. For completed fiscal years, this represents the census at the end of the year. For partial fiscal years, it reflects the census as of the most recent reporting date.												

@@ -1,0 +1,550 @@
+---
+output:
+  html_document:
+    toc: false
+params:
+  project_directory: "/Users/isaac/Dropbox/S2P Datasets Shared Folder/MLTC_MMC_NH_data/"
+  use_local_data: FALSE
+---
+
+<style>
+.button_download {
+font-size: 16px;
+font-family: "Arial";
+color: black;
+background-color: #C7C9D8;
+}
+</style>
+
+```{r setup_options, include=FALSE}
+knitr::opts_chunk$set(eval = TRUE, include = TRUE, echo = FALSE, message = FALSE, warning = FALSE, error = TRUE, fig.width = 12, fig.height = 8, cache = FALSE)
+```
+
+```{r setup_libraries, include=FALSE}
+library(tidyverse)
+library(furrr)
+library(scales)
+library(gt)
+library(pdftools)
+library(httr)
+library(downloadthis)
+data_dir <- params$project_directory
+```
+
+```{r isaac_step2_graph_theme, include=FALSE}
+isaac_step2_graph_theme <- theme(plot.title.position = "plot",
+                                 plot.title = element_text(face = "bold"),
+                                 legend.position = "top",
+                                 strip.text = element_text(color = "black"),
+                                 legend.title = element_text(face = "bold",hjust = 0.5),
+                                 axis.title.y = element_text(face = "bold",angle = 90),
+                                 axis.title.x = element_text(face = "bold"))
+```
+
+```{r setup_medicaid_enrollment_data_ingestion, include=FALSE}
+if(params$use_local_data == FALSE){
+  # https://health.data.ny.gov/Health/Medicaid-Program-Enrollment-by-Month-Beginning-200/m4hz-kzn3/about_data
+  nys_medicaid <- read_csv("https://health.data.ny.gov/api/views/m4hz-kzn3/rows.csv?accessType=DOWNLOAD") %>% janitor::clean_names()
+  
+  write_csv(nys_medicaid,paste0(data_dir,'mmc_mltc/data/Medicaid-Program-Enrollment-by-Month-Beginning-2009.csv'))
+} else{
+  nys_medicaid <- read_csv(paste0(data_dir,'mmc_mltc/data/Medicaid-Program-Enrollment-by-Month-Beginning-2009.csv'))
+}
+```
+
+```{r setup_medicaid_spending_data_ingestion, include=FALSE}
+if(params$use_local_data == FALSE){
+  # https://www.health.ny.gov/health_care/medicaid/regulations/global_cap/
+  try_downloading_report <- function(){
+    # Use GET with a User-Agent header
+    response <- GET(pdf_url, user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"))
+    
+    # Check response status
+    if (status_code(response) == 200) {
+      writeBin(content(response, "raw"), pdf_file)
+      message("File downloaded successfully.")
+    } else {
+      message("Failed to download file. HTTP status: ", status_code(response))
+    }
+  }
+  
+  # Download Global Cap Quarterly Reports
+  for(i in c(2011:(as.numeric(format(Sys.Date(),"%Y"))))){
+    for(j in c(1:4)){
+      qrt_number <- case_when(j == 1 ~ "1st",
+                              j == 2 ~ "2nd",
+                              j == 3 ~ "3rd",
+                              j == 4 ~ "4th")
+      
+      pdf_url <- paste0("https://www.health.ny.gov/health_care/medicaid/regulations/global_cap/monthly/sfy_",i,"-",i+1,"/docs/",qrt_number,"_qtr_rpt.pdf")
+      
+      pdf_file <- paste0(data_dir,"global_cap_reports/nys_medicaid_",i,"-",i+1,"_q",j,"report.pdf")
+      
+      if(file.exists(pdf_file) == FALSE){
+        try_downloading_report()
+      } else{
+        message("File already downloaded")
+      }
+    }
+  }
+  
+  # Download Global Cap Monthly Reports
+  for(i in c(2011:(as.numeric(format(Sys.Date(),"%Y"))))){
+    for(j in c(month.name,month.abb,"Sept")){
+      for(k in c(0,1)){
+        pdf_url <- paste0("https://www.health.ny.gov/health_care/medicaid/regulations/global_cap/monthly/sfy_",i,"-",i+1,"/docs/",j,"_",i+k,"_report.pdf") %>% 
+          str_to_lower()
+        
+        pdf_file <- paste0(data_dir,"global_cap_reports/nys_medicaid_",i,"-",i+1,"_month_",j,"_",i+k,"_report.pdf")
+        
+        if(file.exists(pdf_file) == FALSE){
+          try_downloading_report()
+        } else{
+          message("File already downloaded")
+        }
+      }
+    }
+  }
+  
+  report_names <- list.files(paste0(data_dir,"global_cap_reports/"),
+                             pattern = ".pdf",
+                             full.names = FALSE,
+                             recursive = FALSE) %>% 
+    # Unusually formatted non-Q4 report
+    setdiff("nys_medicaid_2024-2025_q2report.pdf")
+  
+  report_paths <- list.files(paste0(data_dir,"global_cap_reports/"),
+                             pattern = ".pdf",
+                             full.names = TRUE,
+                             recursive = FALSE) %>% 
+    # Unusually formatted non-Q4 report
+    setdiff("/Users/isaac/Dropbox/S2P Datasets Shared Folder/MLTC_MMC_NH_data/global_cap_reports//nys_medicaid_2024-2025_q2report.pdf")
+  
+  for(i in c(1:length(report_names))){
+    report_name <- report_names[i]
+    
+    # Extract text from the PDF
+    pdf_text <- pdf_text(report_paths[i])
+    
+    report_table_page <- c(1:length(pdf_text))[pdf_text %>% str_to_lower() %>% str_detect("actual") &
+                                                 pdf_text %>% str_to_lower() %>% str_detect("variance") &
+                                                 (pdf_text %>% str_to_lower() %>% str_detect("category of service") | pdf_text %>% str_to_lower() %>% str_detect("category of spending") | pdf_text %>% str_to_lower() %>% str_detect("quarter 2")) &
+                                                 pdf_text %>% str_detect("TOTAL") &
+                                                 pdf_text %>% str_to_lower() %>% str_detect("table of contents",negate = TRUE)] %>% 
+      min()
+    
+    pdf_table <- pdf_text[report_table_page]
+    
+    dollar_multiplier <- case_when(pdf_table %>% as.character() %>% str_to_lower() %>% str_detect("in millions") ~ 1000000,
+                                   pdf_table %>% as.character() %>% str_to_lower() %>% str_detect("in thousands") ~ 1000,
+                                   pdf_table %>% as.character() %>% str_to_lower() %>% str_detect("millions") ~ 1000000,
+                                   pdf_table %>% as.character() %>% str_to_lower() %>% str_detect("thousands") ~ 1000)
+    
+    # Parse the table from the extracted text
+    table_data <- str_split(pdf_table,"\n")[[1]] %>% 
+      # Clean and structure the data
+      str_trim() %>%
+      as_tibble()
+    
+    table_start_row <- table_data %>% 
+      rowid_to_column() %>% 
+      filter(value %>% str_to_lower() %>% str_sub(1,19) == "category of service" |
+               value %>% str_to_lower() %>% str_sub(1,20) == "category of spending") %>% 
+      dplyr::pull(rowid)
+    
+    first_data_row <- table_data %>% 
+      rowid_to_column() %>% 
+      filter(value %>% str_count("\\$") == 3,
+             rowid > table_start_row) %>% 
+      dplyr::pull(rowid) %>%
+      min()
+    
+    table_end_row <- table_data %>% 
+      rowid_to_column() %>% 
+      filter(value %>% str_sub(1,5) == "TOTAL") %>% 
+      dplyr::pull(rowid)
+    
+    header_rows <- table_data %>% 
+      slice(table_start_row:first_data_row - 1) %>% 
+      as.character() %>% 
+      paste(collapse = " ") %>% 
+      str_to_lower()
+    
+    table_col_names <- case_when(str_detect(header_rows,"target") ~ c("category_of_service","target","actual","variance"),
+                                 str_detect(header_rows,"estimated") ~ c("category_of_service","estimated","actual","variance"))
+    
+    table_clean <- table_data %>%
+      slice(first_data_row:table_end_row) %>% 
+      separate(col = value, into = c("Column1", "Column2", "Column3", "Column4"), sep = "\\s{2,}", fill = "right")
+    
+    names(table_clean) <- table_col_names
+    
+    table_clean <- table_clean %>% 
+      mutate(report = report_name %>% str_remove(".pdf"),
+             multiplier = dollar_multiplier)
+    
+    if(i == 1){
+      nys_medicaid_spending <- table_clean
+    } else{
+      nys_medicaid_spending <- bind_rows(nys_medicaid_spending,table_clean)
+    }
+    paste0(i," of ",length(report_names),"(",scales::percent(i/length(report_names),accuracy = 0.1),") | ",report_name) %>% print()
+  }
+  write_csv(nys_medicaid_spending,paste0(data_dir,'mmc_mltc/data/Medicaid-Spending-by-Fiscal_Year.csv'))
+} else{
+  nys_medicaid_spending <- read_csv(paste0(data_dir,'mmc_mltc/data/Medicaid-Spending-by-Fiscal_Year.csv'))
+}
+```
+
+```{r setup_medicaid_enrollment_vs_spending_analysis, include=FALSE}
+mmc_analysis <- nys_medicaid %>% 
+  filter(managed_care_vs_fee_for_service == "MMC") %>% 
+  mutate(month_year = paste(eligibility_year,eligibility_month,"01",sep = "-") %>% as.Date(),
+         year = paste(eligibility_year,"01","01",sep = "-") %>% as.Date(),
+         plan_type = case_when(plan_type == "PARTIAL CAP PLAN" ~ "PARTIAL CAP PLAN and PARTIAL MLTC",
+                               plan_type == "PARTIAL MLTC" ~ "PARTIAL CAP PLAN and PARTIAL MLTC",
+                               TRUE ~ plan_type))
+
+mmc_global_cap_analysis <- nys_medicaid_spending %>% 
+  mutate(reference = ifelse(is.na(target),estimated,target),
+         ref_type = ifelse(is.na(target),"estimated","target"),
+         across(.cols = c("reference","actual"),
+                .fns = ~ (.x %>%
+                            # Remove $ and ,
+                            str_remove_all("[\\$,]") %>%
+                            # Replace parentheses with a negative sign
+                            str_replace_all("\\((.*)\\)", "-\\1") %>%
+                            # Convert to numeric
+                            as.numeric()) * multiplier),
+         difference = actual - reference) %>% 
+  select(category_of_service,
+         ref_type,
+         reference,
+         actual,
+         report) %>% 
+  # Only include year-end reports in the analysis
+  filter(str_detect(report,"q4|Mar")) %>% 
+  mutate(fiscal_yr = str_sub(report,14,22),
+         type = case_when(category_of_service %in% c("Mainstream Managed Care",
+                                                     "Inpatient",
+                                                     "Outpatient/Emergency Room",
+                                                     "Clinic",
+                                                     "Pharmacy",
+                                                     "Transportation",
+                                                     "Non-Institutional",
+                                                     "Non-Institutional / Other") ~ "Mainstream",
+                          category_of_service %in% c("Other Long Term Care") ~ "Long Term Care")) %>% 
+  select(-report)
+
+mmc_global_cap_analysis_data_v1 <- mmc_global_cap_analysis %>% 
+  mutate(fiscal_yr_dt = fiscal_yr %>% str_sub(1,4) %>% paste("01","01",sep="-") %>% as.Date()) %>% 
+  select(-ref_type,
+         -reference) %>% 
+  filter(category_of_service %in% c("Medicaid Managed Care",
+                                    "Managed Care",
+                                    "Total Fee-For-Service",
+                                    "Total Fee For Service")) %>% 
+  mutate(category_of_service_type = case_when(category_of_service %>% str_to_lower() %>% str_detect("fee") ~ "Fee For Service",
+                                              category_of_service %>% str_to_lower() %>% str_detect("managed") ~ "Managed Care"))
+
+mmc_enrollment_vs_spending_table_data <- mmc_analysis %>% 
+  mutate(fiscal_yr = case_when(eligibility_month <= 3 ~ eligibility_year - 1,
+                               TRUE ~ eligibility_year)) %>% 
+  group_by(fiscal_yr) %>% 
+  summarise(enrollee_months = sum(number_of_recipients)) %>% 
+  ungroup() %>% 
+  left_join(mmc_analysis %>% 
+              mutate(fiscal_yr = case_when(eligibility_month <= 3 ~ eligibility_year - 1,
+                                           TRUE ~ eligibility_year)) %>% 
+              group_by(fiscal_yr,eligibility_month) %>% 
+              summarise(enrollee_months = sum(number_of_recipients)) %>% 
+              ungroup() %>% 
+              arrange(desc(fiscal_yr),
+                      desc(eligibility_month)) %>% 
+              mutate(enrollee_months_delta = enrollee_months  - lead(enrollee_months),
+                     enrollee_months_delta_pct = enrollee_months_delta / lead(enrollee_months,n=1)) %>% 
+              group_by(fiscal_yr) %>% 
+              summarise(mean_monthly_change_pct = mean(enrollee_months_delta_pct)) %>% 
+              ungroup(),
+            by = "fiscal_yr") %>% 
+  left_join(mmc_analysis %>% 
+              mutate(fiscal_yr = case_when(eligibility_month <= 3 ~ eligibility_year - 1,
+                                           TRUE ~ eligibility_year)) %>% 
+              group_by(fiscal_yr,eligibility_month) %>% 
+              summarise(enrollee_months = sum(number_of_recipients)) %>% 
+              ungroup() %>% 
+              group_by(fiscal_yr) %>% 
+              slice_max(eligibility_month) %>% 
+              ungroup() %>% 
+              select(fiscal_yr,
+                     enrollee_months) %>% 
+              rename("end_of_period_enrollment" = "enrollee_months"),
+            by = "fiscal_yr") %>% 
+  arrange(desc(fiscal_yr)) %>% 
+  left_join(mmc_global_cap_analysis %>% 
+              mutate(fiscal_yr_dt = fiscal_yr %>% str_sub(1,4) %>% paste("01","01",sep="-") %>% as.Date(),
+                     fiscal_yr = fiscal_yr_dt %>% format("%Y") %>% as.numeric) %>% 
+              filter(category_of_service %in% c("Medicaid Managed Care",
+                                                "Managed Care")) %>% 
+              select(fiscal_yr,actual) %>% 
+              rename("mmc_spending" = "actual"),
+            by = "fiscal_yr") %>% 
+  left_join(mmc_analysis %>% 
+              mutate(fiscal_yr = case_when(eligibility_month <= 3 ~ eligibility_year - 1,
+                                           TRUE ~ eligibility_year)) %>% 
+              group_by(fiscal_yr,eligibility_month) %>% 
+              summarise(enrollee_months = sum(number_of_recipients)) %>% 
+              ungroup() %>% 
+              group_by(fiscal_yr) %>% 
+              summarise(n_months = n(),
+                        mean_number_of_enrollees = mean(enrollee_months)) %>% 
+              ungroup(),
+            by = "fiscal_yr") %>% 
+  filter(fiscal_yr >= 2011) %>% 
+  mutate(mmc_spending_delta = mmc_spending  - lead(mmc_spending),
+         mmc_spending_delta_pct = mmc_spending_delta / lead(mmc_spending,n=1),,
+         spending_per_enrollee_month = mmc_spending / enrollee_months,
+         spending_per_enrollee_month_delta = spending_per_enrollee_month  - lead(spending_per_enrollee_month),
+         spending_per_enrollee_month_delta_pct = spending_per_enrollee_month_delta / lead(spending_per_enrollee_month,n=1),
+         enrollee_month_delta = enrollee_months - lead(enrollee_months),
+         enrollee_month_delta_pct = enrollee_month_delta / lead(enrollee_months,n=1),
+         fiscal_yr = paste(fiscal_yr,str_sub(fiscal_yr + 1,3,4),sep = "-"),
+         fiscal_yr = paste0("FY",str_sub(fiscal_yr,-2)),
+         mean_spend_per_enrollee = mmc_spending / mean_number_of_enrollees,
+         mean_spend_per_enrollee_delta = mean_spend_per_enrollee - lead(mean_spend_per_enrollee),
+         mean_spend_per_enrollee_delta_pct = mean_spend_per_enrollee_delta / lead(mean_spend_per_enrollee,n=1)) %>% 
+  select(fiscal_yr,
+         n_months,
+         enrollee_months,
+         mean_monthly_change_pct,
+         enrollee_month_delta,
+         enrollee_month_delta_pct,
+         end_of_period_enrollment,
+         mmc_spending,
+         mmc_spending_delta,
+         mmc_spending_delta_pct,
+         mean_number_of_enrollees,
+         mean_spend_per_enrollee,
+         mean_spend_per_enrollee_delta,
+         mean_spend_per_enrollee_delta_pct)
+
+mmc_enrollment_vs_spending_table <- mmc_enrollment_vs_spending_table_data %>% 
+  gt() %>% 
+  tab_header(title = md("**Medicaid Managed Care Enrollment and Spending, by Fiscal Year**"),
+             subtitle = paste0("New York State (",
+                               mmc_global_cap_analysis_data_v1 %>% slice_min(fiscal_yr_dt) %>% dplyr::pull(fiscal_yr) %>% unique(),
+                               " to ",
+                               mmc_global_cap_analysis_data_v1 %>% slice_max(fiscal_yr_dt) %>% dplyr::pull(fiscal_yr) %>% unique(),
+                               ")")) %>%
+  fmt_integer(c(n_months,
+                enrollee_months,
+                enrollee_month_delta,
+                mean_number_of_enrollees,
+                end_of_period_enrollment)) %>% 
+  fmt_currency(c(mmc_spending,
+                 mmc_spending_delta,
+                 mean_spend_per_enrollee,
+                 mean_spend_per_enrollee_delta),
+               decimals = 0) %>% 
+  fmt_percent(c(enrollee_month_delta_pct,
+                mmc_spending_delta_pct,
+                mean_spend_per_enrollee_delta_pct,
+                mean_monthly_change_pct)) %>% 
+  tab_spanner(label = "Enrollment",
+              columns = c(enrollee_months,
+                          mean_monthly_change_pct,
+                          enrollee_month_delta,
+                          enrollee_month_delta_pct,
+                          end_of_period_enrollment)) %>% 
+  tab_spanner(label = "State Spending",
+              columns = c(mmc_spending,
+                          mmc_spending_delta,
+                          mmc_spending_delta_pct)) %>% 
+  tab_spanner(label = "Average Annual Spending per Enrollee",
+              columns = c(mean_number_of_enrollees,
+                          mean_spend_per_enrollee,
+                          mean_spend_per_enrollee_delta,
+                          mean_spend_per_enrollee_delta_pct)) %>% 
+  cols_label(fiscal_yr = "Fiscal Year",
+             n_months = "Months Reported",
+             enrollee_months = "Enrollee Months",
+             mean_monthly_change_pct = "Average Monthly Change %",
+             enrollee_month_delta = "Annual Change",
+             enrollee_month_delta_pct = "Annual Change %",
+             end_of_period_enrollment = "End of Period Enrollment",
+             mmc_spending = "Spending",
+             mmc_spending_delta = "Annual Change",
+             mmc_spending_delta_pct = "Annual Change %",
+             mean_number_of_enrollees = "Average Monthly Number of Enrollees",
+             mean_spend_per_enrollee = "Spending",
+             mean_spend_per_enrollee_delta = "Annual Change",
+             mean_spend_per_enrollee_delta_pct = "Annual Change %") %>% 
+  cols_align(align = "left", columns = fiscal_yr) %>% 
+  tab_style(style = cell_text(weight = "bold"),
+            locations = list(cells_column_labels(),
+                             cells_column_spanners())) %>% 
+  tab_source_note(source_note = md("**Data Sources:** Health Data NY; NYSDOH Global Spending Cap
+Reports")) %>% 
+  tab_source_note(source_note = md(paste0("**Data as of:** ",format(Sys.Date(),"%B %d, %Y")))) %>% 
+  tab_options(table.font.size = px(10),
+              table.font.names = "Helvetica",
+              data_row.padding = px(2),
+              table.width = pct(95),
+              container.width = px(1000))
+
+# Calculate scaling factors for normalization
+max_enrollee_mmc <- max(mmc_enrollment_vs_spending_table_data$enrollee_months,na.rm=TRUE) / 1e6
+max_spending_mmc <- max(mmc_enrollment_vs_spending_table_data$mmc_spending,na.rm=TRUE) / 1e9
+
+mmc_enrollment_vs_spending_graph <- mmc_enrollment_vs_spending_table_data %>% 
+  select(fiscal_yr,
+         enrollee_months,
+         mmc_spending) %>% 
+  # Create the plot
+  ggplot(aes(x = fiscal_yr)) +
+  # Plot enrollee_months as bars
+  geom_bar(aes(y = enrollee_months / 1e6, fill = "Enrollment"),
+           stat = "identity", alpha = 0.9) +
+  # Plot mltc_spending as a line with points
+  geom_line(aes(y = (mmc_spending / 1e9) * (max_enrollee_mmc / max_spending_mmc),
+                group = 1, color = "Spending")) +
+  geom_point(aes(y = (mmc_spending / 1e9) * (max_enrollee_mmc / max_spending_mmc)), color = "black") +
+  # Left y-axis for enrollee_months
+  scale_y_continuous(
+    name = "Enrollee Months (millions)\n",
+    labels = scales::label_comma(),
+    breaks = breaks_pretty(n = 8),
+    sec.axis = sec_axis(~ . * (max_spending_mmc / max_enrollee_mmc), 
+                        name = "MMC Spending\n", 
+                        breaks = breaks_pretty(n = 8),
+                        labels = scales::label_dollar(scale = 1, suffix = "B"))) +
+  scale_fill_manual(values = "#B9CDE5") +
+  scale_color_manual(values = "black") +
+  # Formatting
+  labs(x = "\nFiscal Year",
+       title = "Medicaid Managed Care Enrollment and Spending, by Fiscal Year",
+       subtitle = paste0("New York State (",
+                         mmc_global_cap_analysis_data_v1 %>% slice_min(fiscal_yr_dt) %>% dplyr::pull(fiscal_yr) %>% unique(),
+                         " to ",
+                         mmc_global_cap_analysis_data_v1 %>% slice_max(fiscal_yr_dt) %>% dplyr::pull(fiscal_yr) %>% unique(),
+                         ")"),
+       color = "",
+       fill = "",
+       caption = paste0("Data Sources: Health Data NY; NYSDOH Global Spending Cap Reports\nData as of: ",format(Sys.Date(),"%B %d, %Y"))) +
+  theme_light(base_size = 16) +
+  isaac_step2_graph_theme +
+  theme(legend.text = element_text(face = "bold"))
+
+mmc_enrollment_vs_spending_table_data %>%
+  select(fiscal_yr,
+         n_months,
+         enrollee_months,
+         mean_number_of_enrollees,
+         end_of_period_enrollment,
+         enrollee_month_delta,
+         enrollee_month_delta_pct,
+         mmc_spending,
+         mmc_spending_delta,
+         mmc_spending_delta_pct,
+         mean_spend_per_enrollee,
+         mean_spend_per_enrollee_delta,
+         mean_spend_per_enrollee_delta_pct) %>% 
+  mutate(fiscal_yr = ifelse(n_months != 12,paste0(fiscal_yr," (YTD)"),fiscal_yr),
+         across(.cols = -c(fiscal_yr,
+                           n_months,
+                           enrollee_months,
+                           mean_number_of_enrollees,
+                           end_of_period_enrollment),
+                .fns = ~ ifelse(n_months != 12,NA,.x))) %>% 
+  rename("State Fiscal Year" = "fiscal_yr",
+         "Months Reported" = "n_months",
+         "Enrollee Months" = "enrollee_months",
+         "Average Annual Enrollment" = "mean_number_of_enrollees",
+         "End of Period Enrollment" = "end_of_period_enrollment",
+         "Enrollee Months Annual Change" = "enrollee_month_delta",
+         "Enrollee Months % Growth" = "enrollee_month_delta_pct",
+         "State Spending (Millions)" = "mmc_spending",
+         "State Spending Annual Change (Millions)" = "mmc_spending_delta",
+         "State Spending Annual Change %" = "mmc_spending_delta_pct",
+         "Average Annual Spending per Enrollee" = "mean_spend_per_enrollee",
+         "Average Annual Spending per Enrollee Annual Change" = "mean_spend_per_enrollee_delta",
+         "Average Annual Per Capita Spending % Growth" = "mean_spend_per_enrollee_delta_pct") %>% 
+  write_csv("mmc_table_data.csv")
+
+mmc_enrollment_vs_spending_table_data %>%
+  filter(n_months == 12) %>% 
+  mutate(data_type = "Actual",
+         fiscal_yr_n = fiscal_yr %>% str_remove("FY") %>% as.numeric(),
+         fiscal_yr = ifelse(n_months != 12,paste0(fiscal_yr," (YTD)"),fiscal_yr)) %>% 
+  arrange(fiscal_yr) %>% 
+  mutate(mean_number_of_enrollees_delta_pct = (mean_number_of_enrollees - lag(mean_number_of_enrollees)) / lag(mean_number_of_enrollees)) %>% 
+  select(data_type,
+         fiscal_yr,
+         mmc_spending,
+         mean_number_of_enrollees,
+         mean_number_of_enrollees_delta_pct,
+         mean_spend_per_enrollee,
+         mean_spend_per_enrollee_delta_pct) %>% 
+  rename("Data Type" = "data_type",
+         "Fiscal Year" = "fiscal_yr",
+         "State Spending" = "mmc_spending",
+         "Average Annual Enrollment" = "mean_number_of_enrollees",
+         "Average Annual Enrollment Change %" = "mean_number_of_enrollees_delta_pct",
+         "Average Annual Spending per Enrollee" = "mean_spend_per_enrollee",
+         "Average Annual Spending per Enrollee Annual Change %" = "mean_spend_per_enrollee_delta_pct") %>% 
+  write_csv("mmc_projection_data.csv")
+```
+
+<br>
+
+```{r mmc_enrollment_vs_spending_table}
+mmc_enrollment_vs_spending_table %>% 
+  tab_source_note(
+    # mmc_enrollment_vs_spending_table_data %>%
+    #   mutate(across(.cols = ends_with("pct"),
+    #                 .fns = ~ percent(.x,accuracy = 0.1)),
+    #          across(.cols = contains("spend") & !ends_with("pct"),
+    #                 .fns = ~ dollar(.x,accuracy = 1)),
+    #          across(.cols = c(enrollee_months,enrollee_month_delta,mean_number_of_enrollees),
+    #                 .fns = ~ comma(.x,accuracy = 1))) %>% 
+    #   rename("Fiscal Year" = "fiscal_yr",
+    #          "Months Reported" = "n_months",
+    #          "Enrollee Months" = "enrollee_months",
+    #          "Average Monthly Change %" = "mean_monthly_change_pct",
+    #          "Enrollee Months Annual Change" = "enrollee_month_delta",
+    #          "Enrollee Months Annual Change %" = "enrollee_month_delta_pct",
+    #          "State Spending" = "mmc_spending",
+    #          "State Spending Annual Change" = "mmc_spending_delta",
+    #          "State Spending Annual Change %" = "mmc_spending_delta_pct",
+    #          "Average Monthly Number of Enrollees" = "mean_number_of_enrollees",
+    #          "Average Annual Spending per Enrollee" = "mean_spend_per_enrollee",
+    #          "Average Annual Spending per Enrollee Annual Change" = "mean_spend_per_enrollee_delta",
+    #          "Average Annual Spending per Enrollee Annual Change %" = "mean_spend_per_enrollee_delta_pct") %>% 
+    #   download_this(
+    #     output_name = paste0("mmc_enrollment_vs_spending__",str_replace_all(Sys.Date(),"-","_")),
+    #     output_extension = ".xlsx",
+    #     file_path = "https://isaacmichaels.github.io/s2p/mmc_enrollment_vs_spending__2025_01_10.xlsx",
+    #     button_label = "Download Excel",
+    #     button_type = "default",
+    #   )
+    download_link(
+      link = "https://github.com/steptwopolicy/s2p_data_analyses/raw/refs/heads/main/mmc_enrollment_vs_spending.xlsx",
+      button_label = "Download Interactive Excel Workbook",
+      button_type = "default",
+      class = "button_download"
+    )
+  )
+```
+
+The interactive Excel workbook allows users to enter growth-rate predictions, and model projections.  
+**Data Sources:** [Health Data NY](https://health.data.ny.gov/Health/Medicaid-Program-Enrollment-by-Month-Beginning-200/m4hz-kzn3/about_data); [New York State Department of Health](https://www.health.ny.gov/health_care/medicaid/regulations/global_cap/)
+
+<br>
+
+```{r mmc_enrollment_vs_spending_graph}
+mmc_enrollment_vs_spending_graph
+```
+
+**Data Sources:** [Health Data NY](https://health.data.ny.gov/Health/Medicaid-Program-Enrollment-by-Month-Beginning-200/m4hz-kzn3/about_data); [New York State Department of Health](https://www.health.ny.gov/health_care/medicaid/regulations/global_cap/)
+
+<br>
