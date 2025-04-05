@@ -84,10 +84,12 @@ params:
 ### To Manually Render
 
 1.  **Open the `.Rmd` file in RStudio.**
-    <img src="images/Screenshot 2025-04-05 at 3.49.46 PM.png" width="500">
+
+    <img src="images/Screenshot 2025-04-05 at 3.49.46 PM.png" width="500"/>
 
 2.  **Click the “Knit” button**
-    <img src="images/Screenshot 2025-04-05 at 3.53.35 PM.png" width="500">
+
+    <img src="images/Screenshot 2025-04-05 at 3.53.35 PM.png" width="500"/>
 
 3.  **Locate the Generated Files**
 
@@ -105,8 +107,7 @@ Each of the two Excel workbooks uses two CSVs:
 -   `*_table_data.csv` → Table sheet (visible first sheet)
 -   `*_projection_data.csv` → Projections sheet (hidden third sheet)
 
-> **Note on Frequency:**
-> Although a new row in the Projections sheet is added only once per fiscal year, because the enrollment data source makes retrospective updates to prior months, **update the Projections sheet every month** using the latest CSV—even if you don’t add a new row that month.
+> **Note on Frequency:** Although a new row in the Projections sheet is added only once per fiscal year, because the enrollment data source makes retrospective updates to prior months, **update the Projections sheet every month** using the latest CSV—even if you don’t add a new row that month.
 
 ### A. Unlock and Unhide Sheets
 
@@ -154,8 +155,11 @@ Each of the two Excel workbooks uses two CSVs:
 ## 6. Committing and Pushing Changes to GitHub
 
 1.  In RStudio’s **Git** tab, check updated HTML, CSV, and Excel files.
-    <img src="images/Screenshot 2025-04-05 at 4.02.40 PM.png" width="500">
+
+    <img src="images/Screenshot 2025-04-05 at 4.02.40 PM.png" width="500"/>
+
 2.  Click **Commit** (the button with the checkmark), enter a message (e.g., “Update reports & Excel – May 2025”), and click **Commit**.
+
 3.  Click **Push** (the green arrow) to upload changes.
 
 > Once pushed, the website will automatically publish the updated reports and data.
