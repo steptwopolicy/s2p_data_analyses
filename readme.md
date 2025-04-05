@@ -21,12 +21,13 @@ While most updates are automated, updating the Excel‑based tools requires a fe
 7.  Maintenance Schedule
 8.  Troubleshooting & FAQ
 9.  Additional Notes
+10. Structure and Purpose of the R Markdown Files
 
 ------------------------------------------------------------------------
 
 ## 1. System Requirements
 
--   **R** (version ≥ 4.3.2
+-   **R** (version ≥ 4.3.2)
 
 -   **RStudio** (version ≥ 2024.12)
 
