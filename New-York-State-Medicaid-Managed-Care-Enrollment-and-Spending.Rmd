@@ -28,6 +28,7 @@ library(gt)
 library(pdftools)
 library(httr)
 library(downloadthis)
+plan(multisession)
 data_dir <- params$project_directory
 ```
 
@@ -43,12 +44,167 @@ isaac_step2_graph_theme <- theme(plot.title.position = "plot",
 
 ```{r setup_medicaid_enrollment_data_ingestion, include=FALSE}
 if(params$use_local_data == FALSE){
-  # https://health.data.ny.gov/Health/Medicaid-Program-Enrollment-by-Month-Beginning-200/m4hz-kzn3/about_data
-  nys_medicaid <- read_csv("https://health.data.ny.gov/api/views/m4hz-kzn3/rows.csv?accessType=DOWNLOAD") %>% janitor::clean_names()
+  # # https://health.data.ny.gov/Health/Medicaid-Program-Enrollment-by-Month-Beginning-200/m4hz-kzn3/about_data
+  # nys_medicaid <- read_csv("https://health.data.ny.gov/api/views/m4hz-kzn3/rows.csv?accessType=DOWNLOAD") %>% janitor::clean_names()
   
-  write_csv(nys_medicaid,paste0(data_dir,'mmc_mltc/data/Medicaid-Program-Enrollment-by-Month-Beginning-2009.csv'))
+  # https://www.health.ny.gov/health_care/managed_care/reports/enrollment/monthly/
+  # https://www.health.ny.gov/health_care/managed_care/reports/enrollment/monthly/archives.htm
+  
+  # Custom headers for the request
+  custom_headers <- add_headers(
+    `User-Agent` = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/97.0.4692.71 Safari/537.36",
+    `Accept` = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel;q=0.9,*/*;q=0.8",
+    `Connection` = "keep-alive"
+  )
+  
+  # Function to download a file
+  download_file <- function(url, save_directory, filename) {
+    destfile <- file.path(save_directory, filename)  # Create full path
+    response <- GET(url, custom_headers)
+    
+    if (status_code(response) == 200) {
+      writeBin(content(response, "raw"), destfile)
+      message("File saved to: ", destfile)
+    } else {
+      warning("Failed to download file: ", url, " - Status code: ", status_code(response))
+    }
+  }
+  
+  # Define months and years
+  months <- sprintf("%02d", 1:12)  # "01", "02", ..., "12"
+  years <- 2008:as.numeric(format(Sys.Date(),"%Y"))              # Adjust range as needed
+  
+  already_downloaded_mmc_files <- list.files(paste0(data_dir,"mmc_mltc/data"),recursive = TRUE)
+  
+  # Loop through years and months to construct URLs and download files
+  for (year in years) {
+    for (month in months) {
+      
+      if(paste0("en",month,"_",year,".xls") %in% already_downloaded_mmc_files | paste0("en",month,"_",year,".xlsx") %in% already_downloaded_mmc_files){
+        message(paste0("en",month,"_",year," was already downloaded"))
+      } else{
+        
+        # Construct the URL for both file types
+        url_xlsx <- paste0("https://www.health.ny.gov/health_care/managed_care/reports/enrollment/monthly/", year, "/docs/en", month, "_", substr(year, 3, 4), ".xlsx")
+        url_xls <- paste0("https://www.health.ny.gov/health_care/managed_care/reports/enrollment/monthly/", year, "/docs/en", month, "_", substr(year, 3, 4), ".xls")
+        
+        # Attempt to download .xlsx file first
+        tryCatch(
+          download_file(url_xlsx, paste0(data_dir,"mmc_mltc/data"), paste0("en", month, "_", year, ".xlsx")),
+          error = function(e) {
+            message("Trying .xls for ", month, "/", year)
+          }
+        )
+        
+        # Attempt to download .xls file if .xlsx fails
+        tryCatch(
+          download_file(url_xls, paste0(data_dir,"mmc_mltc/data"), paste0("en", month, "_", year, ".xls")),
+          error = function(e) {
+            message("Failed for both .xlsx and .xls for ", month, "/", year)
+          }
+        )
+      }
+    }
+  }
+  
+  mmc_county_list <- c("ALBANY","ALLEGANY","BROOME","CATTARAUGUS","CAYUGA","CHAUTAUQUA","CHEMUMG","CHEMUNG","CHENANGO",
+                       "CLINTON","COLUMBIA","CORTLAND","DELAWARE","DUTCHESS","ERIE","ESSEX","FRANKLIN","FULTON",
+                       "GENESEE","GREENE","HAMILTON","HERKIMER","JEFFERSON","LEWIS","LIVINGSTON","MADISON","MONROE",
+                       "MONTGOMERY","NASSAU","NEW YORK","NEW YORK CITY","NIAGARA","ONEIDA","ONONDAGA","ONTARIO","ORANGE",
+                       "ORLEANS","OSWEGO","OTSEGO","PUTNAM","RENSSELAER","ROCKLAND","SAINT LAWRENCE","SARATOGA","SCHENECTADY", 
+                       "SCHOHARIE","SCHUYLER","SENECA","ST LAWRENCE","STEUBEN","SUFFOLK","SULLIVAN","TIOGA","TOMPKINS",
+                       "ULSTER","WARREN","WASHINGTON","WAYNE","WESTCHESTER","WYOMING","YATES")
+  
+  downloaded_mmc_files <- list.files(paste0(data_dir,"mmc_mltc/data"),
+                                     recursive = TRUE,
+                                     full.names = TRUE,
+                                     pattern = "xls")
+  
+  report_sheets <- downloaded_mmc_files %>% 
+    str_replace("en10_24","en10_2024") %>% 
+    tibble() %>% 
+    rename("report" = 1) %>% 
+    filter(str_detect(report,"Medicaid-Program-Enrollment-by-Month-Beginning-2009.csv",negate = TRUE),
+           str_detect(report,"Medicaid-Spending-by-Fiscal_Year.csv",negate = TRUE)) %>% 
+    rowwise() %>% 
+    mutate(sheets = readxl::excel_sheets(report) %>% paste(collapse = ";")) %>% 
+    ungroup() %>% 
+    separate_rows(sheets,sep = ";") %>% 
+    mutate(report_my = report %>%
+             str_remove(paste0(data_dir,"mmc_mltc/data/")) %>% 
+             str_remove(".xlsx") %>% 
+             str_remove(".xls") %>% 
+             str_remove("en") %>%
+             paste0(.,"_01") %>% 
+             as.Date("%m_%Y_%d"))
+  
+  parse_mmc <- function(input_file){
+    
+    mmc_tab_name <- readxl::excel_sheets(input_file)
+    mmc_tab_name <- mmc_tab_name[str_detect(mmc_tab_name,"Medicaid Managed")]
+    
+    temp_1 <- readxl::read_excel(input_file,
+                               sheet = mmc_tab_name,
+                               skip = 0) %>%
+      janitor::clean_names()
+    
+    temp_2 <- temp_1 %>% 
+      rename("col_1" = 1,
+             "col_2" = 2) %>% 
+      filter(str_detect(str_to_lower(col_1),"total") | str_detect(str_to_lower(col_2),"total"),
+             str_detect(str_to_lower(col_1),"state|grand") | str_detect(str_to_lower(col_2),"state|grand"),
+             str_detect(str_to_lower(col_1),"upstate",negate = TRUE) | is.na(col_1),
+             str_detect(str_to_lower(col_2),"upstate",negate = TRUE) | is.na(col_2))
+    
+    if(nrow(temp_2) == 0){
+      temp_1 %>% 
+        select(ncol(temp_1)) %>% 
+        rename("col_1" = 1) %>% 
+        mutate(col_1 = col_1 %>% 
+                 as.character() %>% 
+                 str_remove_all(",") %>% 
+                 as.numeric()) %>% 
+        summarise(number_of_recipients = max(col_1,na.rm = TRUE)) %>% 
+        return()
+        
+    } else{
+      temp_2 %>% 
+        slice(1) %>% 
+        select(-c(1:2)) %>% 
+        pivot_longer(cols = everything(),
+                     values_to = "number_of_recipients",
+                     values_transform = as.character) %>% 
+        mutate(number_of_recipients = number_of_recipients %>% 
+                 str_remove_all(",") %>% 
+                 as.numeric()) %>% 
+        summarise(number_of_recipients = max(number_of_recipients,na.rm = TRUE)) %>% 
+        return()
+    }
+  }
+  
+  start_time_mmc <- Sys.time()
+  mmc <- report_sheets %>%
+    filter(sheets %>% str_to_lower() %>% str_detect("medicaid managed"),
+           report_my >= as.Date("2008-08-01")) %>%
+    future_map2_dfr(.x = dplyr::pull(.,report),
+                    .y = dplyr::pull(.,report_my),
+                    .f = ~ parse_mmc(.x) %>%
+                      mutate(month_year = .y),
+                    .progress = TRUE) %>% 
+    relocate(month_year)
+  end_time_mmc <- Sys.time()
+  # end_time_mmc - start_time_mmc
+  
+  nys_medicaid <- mmc %>% 
+    mutate(eligibility_year = format(month_year,"%Y") %>% as.numeric,
+           eligibility_month = format(month_year,"%m") %>% as.numeric) %>% 
+    select(eligibility_year,
+           eligibility_month,
+           number_of_recipients)
+  
+  write_csv(nys_medicaid,paste0(data_dir,'mmc_mltc/data/nys_mmc_enrollment.csv'))
 } else{
-  nys_medicaid <- read_csv(paste0(data_dir,'mmc_mltc/data/Medicaid-Program-Enrollment-by-Month-Beginning-2009.csv'))
+  nys_medicaid <- read_csv(paste0(data_dir,'mmc_mltc/data/nys_mmc_enrollment.csv'))
 }
 ```
 
@@ -128,7 +284,12 @@ if(params$use_local_data == FALSE){
     
     report_table_page <- c(1:length(pdf_text))[pdf_text %>% str_to_lower() %>% str_detect("actual") &
                                                  pdf_text %>% str_to_lower() %>% str_detect("variance") &
-                                                 (pdf_text %>% str_to_lower() %>% str_detect("category of service") | pdf_text %>% str_to_lower() %>% str_detect("category of spending") | pdf_text %>% str_to_lower() %>% str_detect("quarter 2")) &
+                                                 (pdf_text %>% str_to_lower() %>% str_detect("category of service") | 
+                                                    pdf_text %>% str_to_lower() %>% str_detect("category of spending") |
+                                                    pdf_text %>% str_to_lower() %>% str_detect("quarter 1") |
+                                                    pdf_text %>% str_to_lower() %>% str_detect("quarter 2") |
+                                                    pdf_text %>% str_to_lower() %>% str_detect("quarter 3") |
+                                                    pdf_text %>% str_to_lower() %>% str_detect("quarter 4")) &
                                                  pdf_text %>% str_detect("TOTAL") &
                                                  pdf_text %>% str_to_lower() %>% str_detect("table of contents",negate = TRUE)] %>% 
       min()
@@ -138,7 +299,8 @@ if(params$use_local_data == FALSE){
     dollar_multiplier <- case_when(pdf_table %>% as.character() %>% str_to_lower() %>% str_detect("in millions") ~ 1000000,
                                    pdf_table %>% as.character() %>% str_to_lower() %>% str_detect("in thousands") ~ 1000,
                                    pdf_table %>% as.character() %>% str_to_lower() %>% str_detect("millions") ~ 1000000,
-                                   pdf_table %>% as.character() %>% str_to_lower() %>% str_detect("thousands") ~ 1000)
+                                   pdf_table %>% as.character() %>% str_to_lower() %>% str_detect("thousands") ~ 1000,
+                                   TRUE ~ 1000000)
     
     # Parse the table from the extracted text
     table_data <- str_split(pdf_table,"\n")[[1]] %>% 
@@ -149,7 +311,10 @@ if(params$use_local_data == FALSE){
     table_start_row <- table_data %>% 
       rowid_to_column() %>% 
       filter(value %>% str_to_lower() %>% str_sub(1,19) == "category of service" |
-               value %>% str_to_lower() %>% str_sub(1,20) == "category of spending") %>% 
+               value %>% str_to_lower() %>% str_sub(1,20) == "category of spending" |
+               (value %>% str_to_lower() %>% str_detect("estimated") &
+                  value %>% str_to_lower() %>% str_detect("actual") &
+                  value %>% str_to_lower() %>% str_detect("variance"))) %>% 
       dplyr::pull(rowid)
     
     first_data_row <- table_data %>% 
@@ -198,12 +363,14 @@ if(params$use_local_data == FALSE){
 
 ```{r setup_medicaid_enrollment_vs_spending_analysis, include=FALSE}
 mmc_analysis <- nys_medicaid %>% 
-  filter(managed_care_vs_fee_for_service == "MMC") %>% 
+  # filter(managed_care_vs_fee_for_service == "MMC") %>% 
   mutate(month_year = paste(eligibility_year,eligibility_month,"01",sep = "-") %>% as.Date(),
-         year = paste(eligibility_year,"01","01",sep = "-") %>% as.Date(),
-         plan_type = case_when(plan_type == "PARTIAL CAP PLAN" ~ "PARTIAL CAP PLAN and PARTIAL MLTC",
-                               plan_type == "PARTIAL MLTC" ~ "PARTIAL CAP PLAN and PARTIAL MLTC",
-                               TRUE ~ plan_type))
+         year = paste(eligibility_year,"01","01",sep = "-") %>% as.Date()
+         # ,
+         # plan_type = case_when(plan_type == "PARTIAL CAP PLAN" ~ "PARTIAL CAP PLAN and PARTIAL MLTC",
+         #                       plan_type == "PARTIAL MLTC" ~ "PARTIAL CAP PLAN and PARTIAL MLTC",
+         #                       TRUE ~ plan_type)
+  )
 
 mmc_global_cap_analysis <- nys_medicaid_spending %>% 
   mutate(reference = ifelse(is.na(target),estimated,target),
@@ -312,7 +479,9 @@ mmc_enrollment_vs_spending_table_data <- mmc_analysis %>%
          fiscal_yr = paste0("FY",str_sub(fiscal_yr,-2)),
          mean_spend_per_enrollee = mmc_spending / mean_number_of_enrollees,
          mean_spend_per_enrollee_delta = mean_spend_per_enrollee - lead(mean_spend_per_enrollee),
-         mean_spend_per_enrollee_delta_pct = mean_spend_per_enrollee_delta / lead(mean_spend_per_enrollee,n=1)) %>% 
+         mean_spend_per_enrollee_delta_pct = mean_spend_per_enrollee_delta / lead(mean_spend_per_enrollee,n=1),
+         across(.cols = c(enrollee_month_delta,enrollee_month_delta_pct),
+                .fn = ~ ifelse(n_months != 12,NA,.x))) %>% 
   select(fiscal_yr,
          n_months,
          enrollee_months,
@@ -328,13 +497,56 @@ mmc_enrollment_vs_spending_table_data <- mmc_analysis %>%
          mean_spend_per_enrollee_delta,
          mean_spend_per_enrollee_delta_pct)
 
-mmc_enrollment_vs_spending_table <- mmc_enrollment_vs_spending_table_data %>% 
+if(mmc_enrollment_vs_spending_table_data %>% slice(1) %>% dplyr::pull(n_months) < 12){
+  projection_data_ytd <- mmc_enrollment_vs_spending_table_data %>% slice(1)
+  projection_data_base_year <- mmc_enrollment_vs_spending_table_data %>% slice(2)
+  projection_data_base_5_years <- mmc_enrollment_vs_spending_table_data %>% slice(2:6)
+  
+  fiscal_yr_projected <- paste0(projection_data_ytd$fiscal_yr," (Estimate)")
+  
+  enrollee_months_projected <- projection_data_ytd$enrollee_months / (projection_data_ytd$n_months / 12)
+  end_of_period_enrollment_projected <- enrollee_months_projected / 12
+  mean_number_of_enrollees_projected <- ((enrollee_months_projected + projection_data_base_year$enrollee_months) / 2) / 12
+  enrollee_month_delta_projected <- enrollee_months_projected - projection_data_base_year$enrollee_months
+  enrollee_month_delta_pct_projected <- enrollee_month_delta_projected / projection_data_base_year$enrollee_months
+  
+  spending_growth_rate_projected <- mean(projection_data_base_5_years$mean_spend_per_enrollee_delta_pct)
+  mean_spend_per_enrollee_projected <- (1 + spending_growth_rate_projected) * projection_data_base_year$mean_spend_per_enrollee
+  mmc_spending_projected <- mean_number_of_enrollees_projected * mean_spend_per_enrollee_projected
+  mmc_spending_delta_projected <- mmc_spending_projected - projection_data_base_year$mmc_spending
+  mmc_spending_delta_pct_projected <- mmc_spending_delta_projected / projection_data_base_year$mmc_spending
+  mean_spend_per_enrollee_delta_projected <- mean_spend_per_enrollee_projected - projection_data_base_year$mean_spend_per_enrollee
+  mean_spend_per_enrollee_delta_pct_projected <- mean_spend_per_enrollee_delta_projected / projection_data_base_year$mean_spend_per_enrollee
+  
+  mmc_enrollment_vs_spending_projection_table_data <- tibble(
+    fiscal_yr = fiscal_yr_projected,
+    enrollee_months = enrollee_months_projected,
+    enrollee_month_delta = enrollee_month_delta_projected,
+    enrollee_month_delta_pct = enrollee_month_delta_pct_projected,
+    end_of_period_enrollment = end_of_period_enrollment_projected,
+    mmc_spending = mmc_spending_projected,
+    mmc_spending_delta = mmc_spending_delta_projected,
+    mmc_spending_delta_pct = mmc_spending_delta_pct_projected,
+    mean_number_of_enrollees = mean_number_of_enrollees_projected,
+    mean_spend_per_enrollee = mean_spend_per_enrollee_projected,
+    mean_spend_per_enrollee_delta = mean_spend_per_enrollee_delta_projected,
+    mean_spend_per_enrollee_delta_pct = mean_spend_per_enrollee_delta_pct_projected
+  )
+} else{
+  mmc_enrollment_vs_spending_projection_table_data <- tibble()
+}
+
+mmc_enrollment_vs_spending_table <- bind_rows(mmc_enrollment_vs_spending_projection_table_data,
+                                              mmc_enrollment_vs_spending_table_data %>% 
+                                                mutate(fiscal_yr = ifelse(n_months < 12,paste0(fiscal_yr," (YTD)"),fiscal_yr))) %>% 
+    relocate(any_of(names(mmc_enrollment_vs_spending_table_data))) %>% 
   gt() %>% 
   tab_header(title = md("**Medicaid Managed Care Enrollment and Spending, by Fiscal Year**"),
              subtitle = paste0("New York State (",
-                               mmc_global_cap_analysis_data_v1 %>% slice_min(fiscal_yr_dt) %>% dplyr::pull(fiscal_yr) %>% unique(),
-                               " to ",
-                               mmc_global_cap_analysis_data_v1 %>% slice_max(fiscal_yr_dt) %>% dplyr::pull(fiscal_yr) %>% unique(),
+                               # mmc_global_cap_analysis_data_v1 %>% slice_min(fiscal_yr_dt) %>% dplyr::pull(fiscal_yr) %>% unique(),
+                               # " to ",
+                               # mmc_global_cap_analysis_data_v1 %>% slice_max(fiscal_yr_dt) %>% dplyr::pull(fiscal_yr) %>% unique(),
+                               "Since April 2011",
                                ")")) %>%
   fmt_integer(c(n_months,
                 enrollee_months,
@@ -383,8 +595,7 @@ mmc_enrollment_vs_spending_table <- mmc_enrollment_vs_spending_table_data %>%
   tab_style(style = cell_text(weight = "bold"),
             locations = list(cells_column_labels(),
                              cells_column_spanners())) %>% 
-  tab_source_note(source_note = md("**Data Sources:** Health Data NY; NYSDOH Global Spending Cap
-Reports")) %>% 
+  tab_source_note(source_note = md("**Data Sources:** New York State Department of Health Medicaid Managed Care Enrollment Reports, and Medicaid Global Spending Cap Updates")) %>% 
   tab_source_note(source_note = md(paste0("**Data as of:** ",format(Sys.Date(),"%B %d, %Y")))) %>% 
   tab_options(table.font.size = px(10),
               table.font.names = "Helvetica",
@@ -424,13 +635,14 @@ mmc_enrollment_vs_spending_graph <- mmc_enrollment_vs_spending_table_data %>%
   labs(x = "\nFiscal Year",
        title = "Medicaid Managed Care Enrollment and Spending, by Fiscal Year",
        subtitle = paste0("New York State (",
-                         mmc_global_cap_analysis_data_v1 %>% slice_min(fiscal_yr_dt) %>% dplyr::pull(fiscal_yr) %>% unique(),
-                         " to ",
-                         mmc_global_cap_analysis_data_v1 %>% slice_max(fiscal_yr_dt) %>% dplyr::pull(fiscal_yr) %>% unique(),
+                         # mmc_global_cap_analysis_data_v1 %>% slice_min(fiscal_yr_dt) %>% dplyr::pull(fiscal_yr) %>% unique(),
+                         # " to ",
+                         # mmc_global_cap_analysis_data_v1 %>% slice_max(fiscal_yr_dt) %>% dplyr::pull(fiscal_yr) %>% unique(),
+                         "Since April 2011",
                          ")"),
        color = "",
        fill = "",
-       caption = paste0("Data Sources: Health Data NY; NYSDOH Global Spending Cap Reports\nData as of: ",format(Sys.Date(),"%B %d, %Y"))) +
+       caption = paste0("Data Sources: New York State Department of Health Medicaid Managed Care Enrollment Reports, and Medicaid Global Spending Cap Updates\nData as of: ",format(Sys.Date(),"%B %d, %Y"))) +
   theme_light(base_size = 16) +
   isaac_step2_graph_theme +
   theme(legend.text = element_text(face = "bold"))
@@ -454,7 +666,9 @@ mmc_enrollment_vs_spending_table_data %>%
                            n_months,
                            enrollee_months,
                            mean_number_of_enrollees,
-                           end_of_period_enrollment),
+                           end_of_period_enrollment,
+                           enrollee_month_delta,
+                           enrollee_month_delta_pct),
                 .fns = ~ ifelse(n_months != 12,NA,.x))) %>% 
   rename("State Fiscal Year" = "fiscal_yr",
          "Months Reported" = "n_months",
@@ -537,7 +751,8 @@ mmc_enrollment_vs_spending_table %>%
 ```
 
 The interactive Excel workbook allows users to enter growth-rate predictions, and model projections.  
-**Data Sources:** [Health Data NY](https://health.data.ny.gov/Health/Medicaid-Program-Enrollment-by-Month-Beginning-200/m4hz-kzn3/about_data); [New York State Department of Health](https://www.health.ny.gov/health_care/medicaid/regulations/global_cap/)
+**Data Sources:** New York State Department of Health [Medicaid Managed Care Enrollment Reports](https://www.health.ny.gov/health_care/managed_care/reports/enrollment/monthly/), and [Medicaid Global Spending Cap Updates
+](https://www.health.ny.gov/health_care/medicaid/regulations/global_cap/)
 
 <br>
 
@@ -545,6 +760,7 @@ The interactive Excel workbook allows users to enter growth-rate predictions, an
 mmc_enrollment_vs_spending_graph
 ```
 
-**Data Sources:** [Health Data NY](https://health.data.ny.gov/Health/Medicaid-Program-Enrollment-by-Month-Beginning-200/m4hz-kzn3/about_data); [New York State Department of Health](https://www.health.ny.gov/health_care/medicaid/regulations/global_cap/)
+**Data Sources:** New York State Department of Health [Medicaid Managed Care Enrollment Reports](https://www.health.ny.gov/health_care/managed_care/reports/enrollment/monthly/), and [Medicaid Global Spending Cap Updates
+](https://www.health.ny.gov/health_care/medicaid/regulations/global_cap/)
 
 <br>

@@ -22,6 +22,7 @@ While most updates are automated, updating the Excel‑based tools requires a fe
 8.  Troubleshooting & FAQ
 9.  Additional Notes
 10. Structure and Purpose of the R Markdown Files
+11. Interactive Excel Workbooks
 
 ------------------------------------------------------------------------
 
@@ -255,5 +256,329 @@ Prints the time trend graph of enrollment and/or spending over time. The graph f
 ### Supplemental chunks
 
 Some `.Rmd` files include additional chunks at the end, which provide secondary analyses.
+
+------------------------------------------------------------------------
+
+## 11. Structure and Purpose of the R Markdown Files
+
+### Workbook 1: MLTC Enrollment and Spending Projection Workbook
+
+This workbook is designed to generate transparent, reproducible
+projections of enrollment and spending in New York's Managed Long-Term
+Care (MLTC) program. It allows users to adjust key growth-rate
+assumptions and observe how those adjustments propagate through
+enrollment, per-member spending, and total expenditure estimates across
+multiple future fiscal years. Although the tool is implemented entirely
+in Excel, its logic mirrors standard forecasting approaches used in
+health policy analysis, enabling policy researchers to evaluate
+alternative scenarios without requiring statistical software.
+
+The workbook is organized into two primary worksheets. The **Table**
+sheet contains the core projection model and the fields in which a user
+enters updated growth-rate assumptions. The **Graph** sheet summarizes
+growth-rate inputs and generates the visualization used in the
+workbook's reporting outputs. Formulas on both sheets pull from these
+user-specified parameters to produce internally consistent projections
+that link enrollment growth, spending growth, per-member-per-month
+(PMPM) dynamics, and fiscal impacts.
+
+#### Workbook Structure and Calculation Logic
+
+The projection model begins with a historical baseline year. Baseline
+enrollment, PMPM spending, total spending, and related values for the
+most recent year populate the first row of the model. All calculated
+fields in subsequent years reference this baseline and each preceding
+year so that changes compound over time.
+
+##### 1. Enrollment Projections
+
+Enrollment for each projected fiscal year is calculated by applying a
+user-defined annual enrollment growth rate. For example, in row 4 the
+projection formula:
+
+```         
+=G5*(1+K4)
+```
+
+takes the prior year's enrollment (cell G5) and applies the growth rate
+identified in cell K4. The result becomes the next year's projected
+enrollment. This pattern repeats across all rows so that changes
+accumulate year over year.
+
+##### 2. PMPM Spending Projections
+
+Future PMPM spending is derived similarly. The formula:
+
+```         
+=(1+Q4)*O5
+```
+
+takes the previous year's PMPM spending (O5) and multiplies it by the
+spending growth rate (Q4). The projected PMPM values then feed directly
+into total spending calculations.
+
+##### 3. Total Annual Spending
+
+Total annual spending is calculated by multiplying the projected
+enrollment by the PMPM amount and then annualizing the figure. For
+example:
+
+```         
+=G4*12
+```
+
+converts the projected monthly spending into an annual total. Subsequent
+formulas additionally compute year-over-year changes, differences from
+baseline, and the proportionate changes implied by the PMPM and
+enrollment trajectories.
+
+##### 4. Growth Rates and Assumptions
+
+Growth-rate assumptions come from two places:
+
+-   Direct user entry into growth-rate fields within the **Table**
+    sheet.
+-   Cross-sheet references to parameter cells in the **Graph** sheet
+    (e.g., `Graph!$P$20` for enrollment growth and `Graph!$R$20` for
+    PMPM growth when generating multi-year projections).
+
+The model is designed so that modifying these inputs immediately
+recalculates all dependent fields, enabling quick sensitivity testing
+and scenario analysis.
+
+#### Conceptual Flow of the Projection Model
+
+1.  **User sets annual growth assumptions** for enrollment and PMPM
+    spending.\
+2.  **Enrollment is projected**, compounding annually.\
+3.  **PMPM spending is projected** using the corresponding spending
+    growth rate.\
+4.  **Total spending is calculated** by multiplying projected enrollment
+    by projected PMPM, then annualizing.\
+5.  **Differences and percent changes** are computed automatically
+    relative to prior years and baseline conditions.
+
+This consistent logic means all projected values can be traced to a
+small set of user-controlled parameters, ensuring transparency and
+reproducibility.
+
+------------------------------------------------------------------------
+
+### Walkthrough Example
+
+The following walkthrough tracks a single projected year to illustrate
+how formulas interact.
+
+Assume the most recent fiscal year with observed data is located in row
+5, and projections begin in row 4 (representing the next fiscal year).
+Each field in row 4 pulls from row 5 and from user-defined growth
+assumptions.
+
+##### Step 1: Enrollment
+
+Cell **G4** calculates projected enrollment:
+
+```         
+=G5*(1+K4)
+```
+
+If the user inputs an annual enrollment growth rate of 3% in **K4**, and
+enrollment in the baseline year (G5) is 100,000 members, the model
+produces:
+
+```         
+=100,000 * (1 + 0.03) = 103,000 members
+```
+
+##### Step 2: PMPM Spending
+
+Projected PMPM spending in **O4** is calculated as:
+
+```         
+=(1+Q4)*O5
+```
+
+If the baseline PMPM spending is \$4,000 and the user specifies a
+spending growth rate of 5% in **Q4**, the result is:
+
+```         
+= $4,000 * (1 + 0.05) = $4,200 PMPM
+```
+
+##### Step 3: Total Annual Spending
+
+Total annual spending in **F4** is calculated using the projected PMPM
+multiplied by enrollment and annualized:
+
+```         
+=G4*12
+```
+
+If the projected PMPM (after compounding) is placed in the preceding
+field (G4), the annualization yields the year’s total spending.
+
+##### Step 4: Year-over-Year Differences
+
+The change in spending relative to the baseline is calculated in **J4**:
+
+```         
+=F4-F5
+```
+
+This provides the spending increase attributable to the combined effect
+of enrollment and PMPM growth.
+
+##### Step 5: Percent Change
+
+Percent change in spending is shown in **N4**, which divides the change
+in spending by the baseline:
+
+```         
+=M4/L5
+```
+
+This highlights the proportional magnitude of the fiscal change.
+
+------------------------------------------------------------------------
+
+### **Interpretation and Use**
+
+The workbook allows the think tank team to assess how changes in
+enrollment growth, PMPM spending growth, or both jointly influence MLTC
+program spending. Because the model is designed for clarity and
+reproducibility, each projection can be traced to specific user-defined
+assumptions, enabling transparent communication with policymakers,
+analysts, and other stakeholders.
+
+------------------------------------------------------------------------
+
+### Workbook 2: MMC Enrollment and Spending Projection Workbook
+
+This workbook is designed to generate transparent, reproducible projections of enrollment and spending in the Medicaid Managed Care (MMC) program. It allows users to adjust key growth-rate assumptions and observe how those adjustments propagate through enrollment, per-capita spending, and total expenditure estimates across multiple future fiscal years. Although the tool is implemented entirely in Excel, its logic mirrors standard forecasting approaches used in health policy analysis, enabling policy researchers to evaluate alternative scenarios without requiring statistical software.
+
+The workbook is organized into two primary worksheets. The Table sheet contains the core projection model and the historical data. The Graph sheet summarizes growth-rate inputs and generates the visualization used in the workbook's reporting outputs. Formulas on the Table sheet pull from user-specified parameters on the Graph sheet to produce internally consistent projections that link enrollment growth, per-capita spending dynamics, and fiscal impacts.
+
+#### Workbook Structure and Calculation Logic
+
+The projection model begins with a historical baseline year. Baseline enrollment, per-capita spending, total spending, and related values for the most recent actuals populate the lower rows of the model. All calculated fields in subsequent future years (located in the rows above) reference the preceding year so that changes compound over time.
+
+##### 1. Enrollment Projections
+
+Enrollment for each projected fiscal year is calculated by applying a user-defined annual enrollment growth rate. For example, if the projection for FY30 is in row 4 and FY29 is in row 5, the formula in the Average Annual Enrollment column (Column D) would be:
+
+```
+=D5 * (1 + 'Graph'!$Ref_Cell)
+```
+
+This takes the prior year's enrollment (cell **D5**) and applies the growth rate identified in the Graph sheet. The result becomes the next year's projected enrollment. This pattern repeats across all rows so that changes accumulate year over year.
+
+##### 2. Per Capita Spending Projections
+
+Future spending per person is derived similarly. The formula in the Average Annual Spending per Enrollee column (Column K) is:
+
+```
+=K5 * (1 + 'Graph'!$Ref_Cell)
+```
+
+This takes the previous year's average annual cost per enrollee (**K5**) and multiplies it by the spending growth rate defined in the Graph sheet. The projected per-capita values then feed directly into total spending calculations.
+
+##### 3. Total Annual Spending
+
+Total annual spending is calculated by multiplying the projected Average Annual Enrollment by the projected Average Annual Spending per Enrollee. Unlike some models that require monthly annualization (PMPM * 12), this workbook utilizes annualized per-capita figures directly. The formula in the State Spending column (Column H) is:
+
+```
+=D4 * K4
+```
+
+This yields the total projected state expenditure for that fiscal year. Subsequent formulas additionally compute year-over-year changes and percentage growth rates.
+
+##### 4. Growth Rates and Assumptions
+
+Growth-rate assumptions come from two specific input fields located on the Graph sheet:
+
+-   **Enrollment Growth Input:** Controls the annual percentage increase/decrease in the covered population.
+-   **Per Capita Spending Input:** Controls the annual percentage increase/decrease in cost per enrollee (proxy for rate adjustments and acuity changes).
+
+The model is designed so that modifying these inputs immediately recalculates all dependent fields in the Table sheet, enabling quick sensitivity testing and scenario analysis.
+
+#### Conceptual Flow of the Projection Model
+
+1. **User sets annual growth assumptions** for enrollment and per-capita spending on the Graph sheet.
+
+2. **Enrollment is projected** on the Table sheet, compounding annually from the baseline.
+
+3. **Per-capita spending is projected** using the corresponding cost growth rate.
+
+4. **Total spending is calculated** by multiplying the projected enrollment volume by the projected per-capita cost.
+
+5. **Differences and percent changes** are computed automatically relative to prior years.
+
+This consistent logic means all projected values can be traced to a small set of user-controlled parameters, ensuring transparency and reproducibility.
+
+#### Walkthrough Example
+
+The following walkthrough tracks a single projected year (FY30) to illustrate how formulas interact.
+
+Assume FY30 (the forecast year) is located in Row 4, and FY29 (the prior year) is located in Row 5. Each field in Row 4 pulls from Row 5 and from user-defined growth assumptions.
+
+##### Step 1: Enrollment
+
+Cell **D4** calculates projected Average Annual Enrollment:
+
+```
+=D5 * (1 + Growth_Rate)
+```
+
+If the user inputs an annual enrollment growth rate of 1.81% (0.0181), and enrollment in the prior year (**D5**) is 4,757,976, the model produces:
+
+4,757,976 * (1 + 0.0181) = 4,844,095 members
+
+##### Step 2: Per Capita Spending
+
+Projected Average Annual Spending per Enrollee in **K4** is calculated as:
+
+```
+=K5 * (1 + Cost_Growth_Rate)
+```
+
+If the prior year's per-capita spending is $4,709.08 and the user specifies a spending growth rate of 1.43% (0.0143), the result is:
+
+$4,709.08 * (1 + 0.0143) = $4,776.42 per enrollee
+
+##### Step 3: Total Annual Spending
+
+Total annual spending in **H4** is calculated using the projected enrollment multiplied by the projected per-capita cost:
+
+```
+=D4 * K4
+```
+
+Using the values derived above:
+
+4,844,095 members * $4,776.42 = $23,137,442,491
+
+##### Step 4: Year-over-Year Differences
+
+The change in spending relative to the prior year is calculated in **I4**:
+
+```
+=H4 - H5
+```
+
+This provides the spending increase (in dollars) attributable to the combined effect of enrollment volume and price/acuity changes.
+
+##### Step 5: Percent Change
+
+Percent change in spending is shown in **J4**, which divides the change in spending by the prior year's total:
+
+```
+=I4 / H5
+```
+
+This highlights the proportional magnitude of the fiscal change.
+
+#### Interpretation and Use
+
+The workbook allows the think tank team to assess how changes in **Enrollment Growth** (Volume) and **Per Capita Spending Growth** (Price) jointly influence MMC program spending. Because the model is designed for clarity and reproducibility, each projection can be traced to specific user-defined assumptions, enabling transparent communication with policymakers, analysts, and other stakeholders.
 
 ------------------------------------------------------------------------

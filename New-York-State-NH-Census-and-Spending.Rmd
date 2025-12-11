@@ -126,7 +126,12 @@ if(params$use_local_data == FALSE){
     
     report_table_page <- c(1:length(pdf_text))[pdf_text %>% str_to_lower() %>% str_detect("actual") &
                                                  pdf_text %>% str_to_lower() %>% str_detect("variance") &
-                                                 (pdf_text %>% str_to_lower() %>% str_detect("category of service") | pdf_text %>% str_to_lower() %>% str_detect("category of spending") | pdf_text %>% str_to_lower() %>% str_detect("quarter 2")) &
+                                                 (pdf_text %>% str_to_lower() %>% str_detect("category of service") | 
+                                                    pdf_text %>% str_to_lower() %>% str_detect("category of spending") |
+                                                    pdf_text %>% str_to_lower() %>% str_detect("quarter 1") |
+                                                    pdf_text %>% str_to_lower() %>% str_detect("quarter 2") |
+                                                    pdf_text %>% str_to_lower() %>% str_detect("quarter 3") |
+                                                    pdf_text %>% str_to_lower() %>% str_detect("quarter 4")) &
                                                  pdf_text %>% str_detect("TOTAL") &
                                                  pdf_text %>% str_to_lower() %>% str_detect("table of contents",negate = TRUE)] %>% 
       min()
@@ -136,7 +141,8 @@ if(params$use_local_data == FALSE){
     dollar_multiplier <- case_when(pdf_table %>% as.character() %>% str_to_lower() %>% str_detect("in millions") ~ 1000000,
                                    pdf_table %>% as.character() %>% str_to_lower() %>% str_detect("in thousands") ~ 1000,
                                    pdf_table %>% as.character() %>% str_to_lower() %>% str_detect("millions") ~ 1000000,
-                                   pdf_table %>% as.character() %>% str_to_lower() %>% str_detect("thousands") ~ 1000)
+                                   pdf_table %>% as.character() %>% str_to_lower() %>% str_detect("thousands") ~ 1000,
+                                   TRUE ~ 1000000)
     
     # Parse the table from the extracted text
     table_data <- str_split(pdf_table,"\n")[[1]] %>% 
@@ -147,7 +153,10 @@ if(params$use_local_data == FALSE){
     table_start_row <- table_data %>% 
       rowid_to_column() %>% 
       filter(value %>% str_to_lower() %>% str_sub(1,19) == "category of service" |
-               value %>% str_to_lower() %>% str_sub(1,20) == "category of spending") %>% 
+               value %>% str_to_lower() %>% str_sub(1,20) == "category of spending" |
+               (value %>% str_to_lower() %>% str_detect("estimated") &
+                  value %>% str_to_lower() %>% str_detect("actual") &
+                  value %>% str_to_lower() %>% str_detect("variance"))) %>% 
       dplyr::pull(rowid)
     
     first_data_row <- table_data %>% 
@@ -223,41 +232,47 @@ mmc_global_cap_analysis <- nys_medicaid_spending %>%
 ```
 
 ```{r setup_nh_analysis, include=FALSE}
-nh_trend_data <- nh_historic %>% 
-  select(facility_id,
-         census_date,
-         ends_with("_beds"),
-         ends_with("beds_available"),
-         -pediatric_ventilator_beds,
-         -dialysis_stations_beds) %>% 
-  pivot_longer(cols = c(!facility_id & !census_date)) %>% 
-  mutate(type = case_when(str_sub(name,-4) == "beds" ~ "beds",
-                          str_sub(name,-14) == "beds_available" ~ "beds_available"),
-         census_date = as.Date(census_date,"%m/%d/%Y"),
-         census_month = census_date %>% format("%Y-%m-01") %>% as.Date(),
-         census_year = census_date %>% format("%Y-01-01") %>% as.Date(),
-         name = name %>% 
-           str_remove("_beds") %>% 
-           str_replace_all("_"," ") %>% 
-           str_to_title()) %>% 
-  group_by(facility_id,
-           census_year,
-           census_month,
-           census_date,
-           type) %>% 
-  summarise(value = sum(value)) %>% 
-  ungroup() %>% 
-  pivot_wider(names_from = type,
-              values_from = value) %>% 
-  mutate(census = beds - beds_available) %>% 
-  # Aggregate from facility-week level to State-week level
-  group_by(census_year,
-           census_month,
-           census_date) %>% 
-  summarise(census = sum(census)) %>% 
-  ungroup() %>% 
-  mutate(fiscal_yr = case_when(month(census_month) <= 3 ~ year(census_year) - 1,
-                               TRUE ~ year(census_year)))
+nh_trend_data <- nh_historic %>%
+  # Step 1: Narrow to relevant columns
+  select(facility_id, census_date,
+         ends_with("_beds"), ends_with("beds_available"),
+         -pediatric_ventilator_beds, -dialysis_stations_beds) %>%
+  
+  # Step 2: Convert date & derive month/year once
+  mutate(census_date = as.Date(census_date, "%m/%d/%Y"),
+         census_month = floor_date(census_date, "month"),
+         census_year = floor_date(census_date, "year")) %>%
+  
+  # Step 3: Reshape and clean name/type
+  pivot_longer(
+    cols = -c(facility_id, census_date, census_month, census_year),
+    names_to = "name", values_to = "value"
+  ) %>%
+  mutate(type = case_when(
+    str_ends(name, "beds") ~ "beds",
+    str_ends(name, "beds_available") ~ "beds_available"
+  ),
+  name = name %>%
+    str_remove("_beds") %>%
+    str_replace_all("_", " ") %>%
+    str_to_title()) %>%
+  
+  # Step 4: Aggregate at facility-date-type level
+  group_by(facility_id, census_date, census_month, census_year, type) %>%
+  summarise(value = sum(value, na.rm = TRUE), .groups = "drop") %>%
+  
+  # Step 5: Wide format & calculate census
+  pivot_wider(names_from = type, values_from = value) %>%
+  mutate(census = beds - beds_available) %>%
+  
+  # Step 6: Aggregate to state-week level
+  group_by(census_year, census_month, census_date) %>%
+  summarise(census = sum(census, na.rm = TRUE), .groups = "drop") %>%
+  
+  # Step 7: Add fiscal year
+  mutate(fiscal_yr = if_else(month(census_month) <= 3,
+                             year(census_year) - 1,
+                             year(census_year)))
 
 nh_monthly_census_graph <- nh_trend_data %>% 
   # Aggregate from State-week level to State-month level (Average)
@@ -271,9 +286,11 @@ nh_monthly_census_graph <- nh_trend_data %>%
              alpha = 0.5) +
   labs(title = "Nursing Home, Monthly Average Census",
        subtitle = paste0("New York State (",
+                         # format(min(as.Date(nh_historic$census_date,"%m/%d/%Y")),"%b %Y"),
+                         # " to ",
+                         # format(max(as.Date(nh_historic$census_date,"%m/%d/%Y")),"%b %Y"),
+                         "Since ",
                          format(min(as.Date(nh_historic$census_date,"%m/%d/%Y")),"%b %Y"),
-                         " to ",
-                         format(max(as.Date(nh_historic$census_date,"%m/%d/%Y")),"%b %Y"),
                          ")"),
        x = "",
        y = "Census\n",
@@ -298,9 +315,11 @@ nh_annual_census_table <- nh_trend_table_data %>%
   gt() %>% 
   tab_header(title = md("**Nursing Home, Annual Average Census**"),
              subtitle = paste0("New York State (",
+                               # format(min(as.Date(nh_historic$census_date,"%m/%d/%Y")),"%b %Y"),
+                               # " to ",
+                               # format(max(as.Date(nh_historic$census_date,"%m/%d/%Y")),"%b %Y"),
+                               "Since ",
                                format(min(as.Date(nh_historic$census_date,"%m/%d/%Y")),"%b %Y"),
-                               " to ",
-                               format(max(as.Date(nh_historic$census_date,"%m/%d/%Y")),"%b %Y"),
                                ")")) %>% 
   fmt_date(columns = census_year,
            date_style = "year") %>% 
@@ -381,9 +400,11 @@ nh_census_vs_spending_table <- nh_census_vs_spending_table_data %>%
   gt() %>% 
   tab_header(title = md("**Nursing Home Census and Spending, by Fiscal Year**"),
              subtitle = paste0("New York State (",
+                               # format(min(as.Date(nh_historic$census_date,"%m/%d/%Y")),"%b %Y"),
+                               # " to ",
+                               # format(max(as.Date(nh_historic$census_date,"%m/%d/%Y")),"%b %Y"),
+                               "Since ",
                                format(min(as.Date(nh_historic$census_date,"%m/%d/%Y")),"%b %Y"),
-                               " to ",
-                               format(max(as.Date(nh_historic$census_date,"%m/%d/%Y")),"%b %Y"),
                                ")")) %>%
   fmt_integer(c(weeks_reported,
                 mean_census,
@@ -465,9 +486,11 @@ nh_census_vs_spending_graph <- nh_census_vs_spending_table_data %>%
   labs(x = "\nFiscal Year",
        title = "Nursing Home Census and Spending, by Fiscal Year",
        subtitle = paste0("New York State (",
+                         # format(min(as.Date(nh_historic$census_date,"%m/%d/%Y")),"%b %Y"),
+                         # " to ",
+                         # format(max(as.Date(nh_historic$census_date,"%m/%d/%Y")),"%b %Y"),
+                         "Since ",
                          format(min(as.Date(nh_historic$census_date,"%m/%d/%Y")),"%b %Y"),
-                         " to ",
-                         format(max(as.Date(nh_historic$census_date,"%m/%d/%Y")),"%b %Y"),
                          ")"),
        color = "",
        fill = "",
