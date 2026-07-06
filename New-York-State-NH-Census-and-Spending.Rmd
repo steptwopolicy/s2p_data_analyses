@@ -340,6 +340,8 @@ nh_annual_census_table <- nh_trend_table_data %>%
               table.font.names = "Helvetica",
               data_row.padding = px(2))
 
+nh_spending_table_date_min <- 2011
+
 nh_census_vs_spending_table_data <- nh_trend_data %>% 
   group_by(fiscal_yr) %>% 
   summarise(weeks_reported = census_date %>% unique() %>% length(),
@@ -374,7 +376,7 @@ nh_census_vs_spending_table_data <- nh_trend_data %>%
   
   mutate(spending_per_capita = spending / mean_census) %>% 
   arrange(desc(fiscal_yr)) %>% 
-  filter(fiscal_yr >= 2011) %>% 
+  filter(fiscal_yr >= nh_spending_table_date_min) %>% 
   mutate(across(.cols = c("mean_census","spending","spending_per_capita"),
                 .fns = ~ .x  - lead(.x),
                 .names = "{.col}_delta"),
@@ -403,8 +405,8 @@ nh_census_vs_spending_table <- nh_census_vs_spending_table_data %>%
                                # format(min(as.Date(nh_historic$census_date,"%m/%d/%Y")),"%b %Y"),
                                # " to ",
                                # format(max(as.Date(nh_historic$census_date,"%m/%d/%Y")),"%b %Y"),
-                               "Since ",
-                               format(min(as.Date(nh_historic$census_date,"%m/%d/%Y")),"%b %Y"),
+                               "Since Apr ",
+                               nh_spending_table_date_min,
                                ")")) %>%
   fmt_integer(c(weeks_reported,
                 mean_census,
@@ -489,8 +491,8 @@ nh_census_vs_spending_graph <- nh_census_vs_spending_table_data %>%
                          # format(min(as.Date(nh_historic$census_date,"%m/%d/%Y")),"%b %Y"),
                          # " to ",
                          # format(max(as.Date(nh_historic$census_date,"%m/%d/%Y")),"%b %Y"),
-                         "Since ",
-                         format(min(as.Date(nh_historic$census_date,"%m/%d/%Y")),"%b %Y"),
+                         "Since Apr ",
+                         nh_spending_table_date_min,
                          ")"),
        color = "",
        fill = "",
